@@ -2,23 +2,24 @@ FROM node:20
 
 WORKDIR /app
 
-# 1) Install OpenSSL 3.x
+# Install OpenSSL 3.x
 RUN apt-get update \
   && apt-get install -y openssl ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-# 2) Copy package files and Prisma schema
-COPY package.json tsconfig.json ./
+# Copy package files
+COPY package*.json ./
 COPY prisma ./prisma
 
-# 3) Install dependencies (but DON'T generate Prisma yet)
-RUN npm install
+# Install ALL dependencies (including prisma as devDependency)
+RUN npm ci
 
-# 4) Copy source and build
+# Copy source and build
 COPY src ./src
+COPY tsconfig.json ./
 RUN npm run build
 
 ENV NODE_ENV=production
 
-# Railway's startCommand will handle prisma generate + migrate + start
-CMD ["npm", "start"]
+# Start with migrations then app
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/server.js"]
