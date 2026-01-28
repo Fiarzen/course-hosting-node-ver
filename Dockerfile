@@ -9,10 +9,8 @@ RUN npm install
 
 COPY src ./src
 
-RUN npx prisma migrate deploy && npm start
-
 RUN npm run prisma:generate && npm run build
 
 ENV NODE_ENV=production
 
-CMD ["npm", "start"]
+CMD ["sh", "-c", "npx prisma migrate deploy && npm start"]
