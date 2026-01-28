@@ -11,20 +11,14 @@ RUN apt-get update \
 COPY package.json tsconfig.json ./
 COPY prisma ./prisma
 
-# 3) Force Prisma to use the correct binary target
-ENV PRISMA_CLI_BINARY_TARGETS=debian-openssl-3.0.x
-
-# 4) Install dependencies
+# 3) Install dependencies (but DON'T generate Prisma yet)
 RUN npm install
 
-# 5) Generate Prisma Client with explicit binary target
-RUN npx prisma generate --generator client
-
-# 6) Copy source and build
+# 4) Copy source and build
 COPY src ./src
 RUN npm run build
 
 ENV NODE_ENV=production
 
-# Run migrations on container start, then launch app
-CMD ["sh", "-c", "npx prisma migrate deploy && npm start"]
+# Railway's startCommand will handle prisma generate + migrate + start
+CMD ["npm", "start"]

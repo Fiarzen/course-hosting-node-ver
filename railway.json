@@ -4,6 +4,7 @@
     "builder": "DOCKERFILE"
   },
   "deploy": {
+    "startCommand": "npx prisma generate && npx prisma migrate deploy && npm start",
     "runtime": "V2",
     "numReplicas": 1,
     "sleepApplication": true,
