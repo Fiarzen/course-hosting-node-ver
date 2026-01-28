@@ -2,20 +2,28 @@ FROM node:20
 
 WORKDIR /app
 
-# 1) Install OpenSSL so Prisma can detect it
+# 1) Install OpenSSL 3.x (Node 20 comes with Debian Bookworm which has OpenSSL 3)
 RUN apt-get update \
   && apt-get install -y openssl ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-COPY package.json tsconfig.json .
+# 2) Copy package files and Prisma schema
+COPY package.json tsconfig.json ./
 COPY prisma ./prisma
 
-# 2) Install deps AFTER OpenSSL is present
+# 3) Install dependencies
 RUN npm install
 
-COPY src ./src
+# 4) Set the OpenSSL version explicitly for Prisma
+ENV PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1
+ENV OPENSSL_CONF=/dev/null
 
-RUN npm run prisma:generate && npm run build
+# 5) Generate Prisma Client with explicit engine
+RUN npx prisma generate
+
+# 6) Copy source and build
+COPY src ./src
+RUN npm run build
 
 ENV NODE_ENV=production
 
