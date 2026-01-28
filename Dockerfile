@@ -11,13 +11,16 @@ RUN apt-get update \
 COPY package.json tsconfig.json ./
 COPY prisma ./prisma
 
-# 3) Install dependencies
+# 3) Force Prisma to use the correct binary target
+ENV PRISMA_CLI_BINARY_TARGETS=debian-openssl-3.0.x
+
+# 4) Install dependencies
 RUN npm install
 
-# 4) Generate Prisma Client with correct binary target
-RUN npx prisma generate
+# 5) Generate Prisma Client with explicit binary target
+RUN npx prisma generate --generator client
 
-# 5) Copy source and build
+# 6) Copy source and build
 COPY src ./src
 RUN npm run build
 
