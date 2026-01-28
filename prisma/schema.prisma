@@ -1,5 +1,6 @@
 generator client {
   provider      = "prisma-client-js"
+  // local dev + Railway's linux-musl + OpenSSL 3
   binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
