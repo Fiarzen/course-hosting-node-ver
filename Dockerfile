@@ -19,6 +19,9 @@ COPY src ./src
 COPY tsconfig.json ./
 RUN npm run build
 
+RUN echo "=== Build artifacts ===" && ls -la dist/
+RUN echo "=== Checking server.js ===" && cat dist/server.js | head -n 20
+
 ENV NODE_ENV=production
 
 # Start with migrations then app

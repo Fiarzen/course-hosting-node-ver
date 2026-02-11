@@ -1,86 +1,84 @@
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import express from "express";
+import cors from "cors";
 import path from "path";
-import fs from "fs";
-import { promisify } from "util";
-import { Request } from "express";
-import multer from "multer";
-import crypto from "crypto";
+import dotenv from "dotenv";
 
-const mkdir = promisify(fs.mkdir);
-const writeFile = promisify(fs.writeFile);
+import { authRouter } from "./routes/auth";
+import { usersRouter } from "./routes/users";
+import { coursesRouter } from "./routes/courses";
+import { lessonsRouter } from "./routes/lessons";
+import { enrollmentsRouter } from "./routes/enrollments";
+import { authMiddleware } from "./middleware/auth";
 
-const awsEnabled = process.env.AWS_S3_ENABLED === "true";
-const bucketName = process.env.AWS_S3_BUCKET_NAME || "";
-const awsRegion = process.env.AWS_REGION || "eu-west-1";
-const endpointUrl = process.env.AWS_ENDPOINT_URL;
+dotenv.config();
 
-let s3Client: S3Client | null = null;
+const app = express();
 
-function getS3Client(): S3Client | null {
-  if (!awsEnabled || !bucketName) {
-    console.log("S3 not enabled or bucket name missing");
-    return null;
-  }
+const PORT = process.env.PORT || 8080;
 
-  if (!s3Client) {
-    try {
-      const config: any = { region: awsRegion };
+// CORS configuration mirroring WebConfig
+const allowedOrigins = (
+  process.env.CORS_ALLOWED_ORIGINS ||
+  "https://mind-leaf.netlify.app,http://localhost:3000,http://127.0.0.1:3000"
+)
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
 
-      if (endpointUrl) {
-        config.endpoint = endpointUrl;
-        config.forcePathStyle = true;
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return cb(null, true);
       }
+      return cb(new Error("Not allowed by CORS"));
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["*"],
+    credentials: true,
+  }),
+);
 
-      s3Client = new S3Client(config);
-      console.log("S3 client initialized successfully");
-    } catch (err) {
-      console.error("Failed to initialize S3 client:", err);
-      return null;
-    }
-  }
-  return s3Client;
-}
+app.use(express.json());
 
-export const upload = multer({ storage: multer.memoryStorage() });
+// Static file handling equivalent to /files/** from uploads
+const uploadsDir = path.join(process.cwd(), "uploads");
+app.use("/files", express.static(uploadsDir));
 
-export async function uploadPdfFromRequest(
-  file: Express.Multer.File | undefined,
-): Promise<string | null> {
-  if (!file) return null;
+// Public routes (match SecurityConfig permitAll list)
+app.use("/auth", authRouter);
+app.use("/users", usersRouter.publicRouter);
+app.use("/courses", coursesRouter.publicRouter);
+app.use("/files", (req, res, next) => next()); // already static above
 
-  const filename = `${crypto.randomUUID()}_${file.originalname}`;
+// Auth middleware for protected routes
+app.use(authMiddleware);
 
-  const client = getS3Client();
-  if (client) {
-    try {
-      const key = `pdfs/${filename}`;
-      await client.send(
-        new PutObjectCommand({
-          Bucket: bucketName,
-          Key: key,
-          Body: file.buffer,
-          ContentType: "application/pdf",
-        }),
-      );
+// Protected sub-routers
+app.use("/users", usersRouter.protectedRouter);
+app.use("/courses", coursesRouter.protectedRouter);
+app.use("/lessons", lessonsRouter);
+app.use("/enrollments", enrollmentsRouter);
 
-      // Build URL based on whether we have custom endpoint
-      if (endpointUrl) {
-        return `${endpointUrl}/${bucketName}/${key}`;
-      } else {
-        return `https://${bucketName}.s3.${awsRegion}.amazonaws.com/${key}`;
-      }
-    } catch (err) {
-      console.error(
-        "Failed to upload to S3, falling back to local storage",
-        err,
-      );
-    }
-  }
+// Simple root similar to HelloController
+app.get("/", (_req, res) => {
+  res.json({ message: "Courses Node backend is running" });
+});
 
-  // Local storage fallback under uploads/pdfs
-  const root = path.join(process.cwd(), "uploads", "pdfs");
-  await mkdir(root, { recursive: true });
-  const dest = path.join(root, filename);
-  await writeFile(dest, file.buffer);
-  return `/files/pdfs/${filename}`;
-}
+// Global error handler returning JSON
+app.use(
+  (
+    err: any,
+    _req: express.Request,
+    res: express.Response,
+    _next: express.NextFunction,
+  ) => {
+    console.error(err);
+    if (res.headersSent) return;
+    res.status(500).json({ error: "Internal server error" });
+  },
+);
+
+app.listen(PORT, () => {
+  console.log(`Server listening on port ${PORT}`);
+});

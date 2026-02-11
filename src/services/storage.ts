@@ -12,20 +12,40 @@ const writeFile = promisify(fs.writeFile);
 const awsEnabled = process.env.AWS_S3_ENABLED === "true";
 const bucketName = process.env.AWS_S3_BUCKET_NAME || "";
 const awsRegion = process.env.AWS_REGION || "eu-west-1";
+const endpointUrl = process.env.AWS_ENDPOINT_URL;
 
 let s3Client: S3Client | null = null;
 
 function getS3Client(): S3Client | null {
-  if (!awsEnabled || !bucketName) return null;
+  if (!awsEnabled || !bucketName) {
+    console.log("S3 not enabled or bucket name missing");
+    return null;
+  }
+
   if (!s3Client) {
-    s3Client = new S3Client({ region: awsRegion });
+    try {
+      const config: any = { region: awsRegion };
+
+      if (endpointUrl) {
+        config.endpoint = endpointUrl;
+        config.forcePathStyle = true;
+      }
+
+      s3Client = new S3Client(config);
+      console.log("S3 client initialized successfully");
+    } catch (err) {
+      console.error("Failed to initialize S3 client:", err);
+      return null;
+    }
   }
   return s3Client;
 }
 
 export const upload = multer({ storage: multer.memoryStorage() });
 
-export async function uploadPdfFromRequest(file: Express.Multer.File | undefined): Promise<string | null> {
+export async function uploadPdfFromRequest(
+  file: Express.Multer.File | undefined,
+): Promise<string | null> {
   if (!file) return null;
 
   const filename = `${crypto.randomUUID()}_${file.originalname}`;
@@ -40,11 +60,20 @@ export async function uploadPdfFromRequest(file: Express.Multer.File | undefined
           Key: key,
           Body: file.buffer,
           ContentType: "application/pdf",
-        })
+        }),
       );
-      return `https://${bucketName}.s3.${awsRegion}.amazonaws.com/${key}`;
+
+      // Build URL based on whether we have custom endpoint
+      if (endpointUrl) {
+        return `${endpointUrl}/${bucketName}/${key}`;
+      } else {
+        return `https://${bucketName}.s3.${awsRegion}.amazonaws.com/${key}`;
+      }
     } catch (err) {
-      console.error("Failed to upload to S3, falling back to local storage", err);
+      console.error(
+        "Failed to upload to S3, falling back to local storage",
+        err,
+      );
     }
   }
 
