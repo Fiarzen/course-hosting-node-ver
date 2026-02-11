@@ -22,4 +22,4 @@ RUN npm run build
 ENV NODE_ENV=production
 
 # Start with migrations then app
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/server.js"]
+CMD ["sh", "-c", "npx prisma db push --accept-data-loss && node dist/server.js"]
