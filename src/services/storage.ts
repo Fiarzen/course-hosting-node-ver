@@ -1,8 +1,12 @@
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+} from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import path from "path";
 import fs from "fs";
 import { promisify } from "util";
-import { Request } from "express";
 import multer from "multer";
 import crypto from "crypto";
 
@@ -17,13 +21,26 @@ const endpointUrl = process.env.AWS_ENDPOINT_URL;
 let s3Client: S3Client | null = null;
 
 function getS3Client(): S3Client | null {
-  if (!awsEnabled || !bucketName) return null;
+  if (!awsEnabled || !bucketName) {
+    console.log("S3 not enabled or bucket name missing");
+    return null;
+  }
+
   if (!s3Client) {
-    s3Client = new S3Client({
-      region: awsRegion,
-      endpoint: endpointUrl,
-      forcePathStyle: true,
-    });
+    try {
+      const config: any = { region: awsRegion };
+
+      if (endpointUrl) {
+        config.endpoint = endpointUrl;
+        config.forcePathStyle = true;
+      }
+
+      s3Client = new S3Client(config);
+      console.log("S3 client initialized successfully");
+    } catch (err) {
+      console.error("Failed to initialize S3 client:", err);
+      return null;
+    }
   }
   return s3Client;
 }
@@ -38,7 +55,7 @@ export async function uploadPdfFromRequest(
   const filename = `${crypto.randomUUID()}_${file.originalname}`;
 
   const client = getS3Client();
-  if (client && endpointUrl) {
+  if (client) {
     try {
       const key = `pdfs/${filename}`;
       await client.send(
@@ -50,7 +67,8 @@ export async function uploadPdfFromRequest(
         }),
       );
 
-      return `${endpointUrl}/${bucketName}/${key}`;
+      // Store just the S3 key, not the full URL
+      return key;
     } catch (err) {
       console.error(
         "Failed to upload to S3, falling back to local storage",
@@ -59,10 +77,35 @@ export async function uploadPdfFromRequest(
     }
   }
 
-  // Local storage fallback under uploads/pdfs
+  // Local storage fallback
   const root = path.join(process.cwd(), "uploads", "pdfs");
   await mkdir(root, { recursive: true });
   const dest = path.join(root, filename);
   await writeFile(dest, file.buffer);
   return `/files/pdfs/${filename}`;
+}
+
+// New function to generate signed URLs
+export async function getSignedPdfUrl(s3Key: string): Promise<string | null> {
+  // If it's a local file path, return as-is
+  if (s3Key.startsWith("/files/")) {
+    return s3Key;
+  }
+
+  const client = getS3Client();
+  if (!client) return null;
+
+  try {
+    const command = new GetObjectCommand({
+      Bucket: bucketName,
+      Key: s3Key,
+    });
+
+    // Generate signed URL valid for 1 hour
+    const signedUrl = await getSignedUrl(client, command, { expiresIn: 3600 });
+    return signedUrl;
+  } catch (err) {
+    console.error("Failed to generate signed URL:", err);
+    return null;
+  }
 }
