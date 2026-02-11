@@ -17,13 +17,26 @@ const endpointUrl = process.env.AWS_ENDPOINT_URL;
 let s3Client: S3Client | null = null;
 
 function getS3Client(): S3Client | null {
-  if (!awsEnabled || !bucketName) return null;
+  if (!awsEnabled || !bucketName) {
+    console.log("S3 not enabled or bucket name missing");
+    return null;
+  }
+
   if (!s3Client) {
-    s3Client = new S3Client({
-      region: awsRegion,
-      endpoint: endpointUrl,
-      forcePathStyle: true,
-    });
+    try {
+      const config: any = { region: awsRegion };
+
+      if (endpointUrl) {
+        config.endpoint = endpointUrl;
+        config.forcePathStyle = true;
+      }
+
+      s3Client = new S3Client(config);
+      console.log("S3 client initialized successfully");
+    } catch (err) {
+      console.error("Failed to initialize S3 client:", err);
+      return null;
+    }
   }
   return s3Client;
 }
@@ -38,7 +51,7 @@ export async function uploadPdfFromRequest(
   const filename = `${crypto.randomUUID()}_${file.originalname}`;
 
   const client = getS3Client();
-  if (client && endpointUrl) {
+  if (client) {
     try {
       const key = `pdfs/${filename}`;
       await client.send(
@@ -50,7 +63,12 @@ export async function uploadPdfFromRequest(
         }),
       );
 
-      return `${endpointUrl}/${bucketName}/${key}`;
+      // Build URL based on whether we have custom endpoint
+      if (endpointUrl) {
+        return `${endpointUrl}/${bucketName}/${key}`;
+      } else {
+        return `https://${bucketName}.s3.${awsRegion}.amazonaws.com/${key}`;
+      }
     } catch (err) {
       console.error(
         "Failed to upload to S3, falling back to local storage",
