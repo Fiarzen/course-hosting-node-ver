@@ -33,12 +33,23 @@ protectedRouter.post("/", async (req, res) => {
     if (req.user.role !== "CREATOR" && req.user.role !== "ADMIN") {
         return res.status(403).json({ error: "Forbidden" });
     }
-    const { title, description, authorId } = req.body || {};
+    const { title, description, authorId, isPaid, priceCents, currency } = req.body || {};
+    if (isPaid === true) {
+        if (!priceCents || typeof priceCents !== "number" || !Number.isInteger(priceCents) || priceCents <= 0) {
+            return res.status(422).json({ error: "priceCents must be a positive integer when isPaid is true", code: "COURSE_NOT_PURCHASABLE" });
+        }
+        if (!currency || typeof currency !== "string") {
+            return res.status(422).json({ error: "currency is required when isPaid is true", code: "COURSE_NOT_PURCHASABLE" });
+        }
+    }
     const course = await db_1.prisma.course.create({
         data: {
             title,
             description,
             authorId: authorId ?? req.user.id,
+            isPaid: isPaid === true,
+            priceCents: isPaid === true ? priceCents : null,
+            currency: isPaid === true ? currency.toLowerCase() : null,
         },
     });
     res.json(course);
@@ -139,5 +150,45 @@ protectedRouter.delete("/:courseId", async (req, res) => {
         await tx.course.delete({ where: { id } });
     });
     res.json({ message: "Course deleted" });
+});
+// PUT /courses/:courseId/pricing (author/admin only)
+protectedRouter.put("/:courseId/pricing", async (req, res) => {
+    if (!req.user)
+        return res.status(401).json({ error: "Authentication required", code: "AUTH_REQUIRED" });
+    const id = Number(req.params.courseId);
+    const course = await db_1.prisma.course.findUnique({ where: { id } });
+    if (!course)
+        return res.status(404).json({ error: "Course not found", code: "COURSE_NOT_FOUND" });
+    const isAdmin = req.user.role === "ADMIN";
+    const isAuthor = course.authorId === req.user.id;
+    if (!isAdmin && !isAuthor) {
+        return res.status(403).json({ error: "Not allowed to modify pricing for this course" });
+    }
+    const { isPaid, priceCents, currency } = req.body || {};
+    if (typeof isPaid !== "boolean") {
+        return res.status(422).json({ error: "isPaid must be a boolean", code: "COURSE_NOT_PURCHASABLE" });
+    }
+    if (isPaid === true) {
+        if (!priceCents || typeof priceCents !== "number" || !Number.isInteger(priceCents) || priceCents <= 0) {
+            return res.status(422).json({ error: "priceCents must be a positive integer when isPaid is true", code: "COURSE_NOT_PURCHASABLE" });
+        }
+        if (!currency || typeof currency !== "string") {
+            return res.status(422).json({ error: "currency is required when isPaid is true", code: "COURSE_NOT_PURCHASABLE" });
+        }
+    }
+    const updated = await db_1.prisma.course.update({
+        where: { id },
+        data: {
+            isPaid,
+            priceCents: isPaid ? priceCents : null,
+            currency: isPaid ? currency.toLowerCase() : null,
+        },
+    });
+    return res.json({
+        courseId: updated.id,
+        isPaid: updated.isPaid,
+        priceCents: updated.priceCents ?? null,
+        currency: updated.currency ?? null,
+    });
 });
 exports.coursesRouter = { publicRouter, protectedRouter };

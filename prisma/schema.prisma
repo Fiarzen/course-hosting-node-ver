@@ -7,9 +7,17 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum CoursePurchaseStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  EXPIRED
+  REFUNDED
+}
+
 model User {
   id                        Int       @id @default(autoincrement())
-  name                      String?   
+  name                      String?
   email                     String    @unique
   password                  String
   role                      String    @default("STUDENT")
@@ -20,20 +28,57 @@ model User {
   coursesAuthored           Course[]  @relation("CourseAuthor")
   enrollments               CourseEnrollment[]
   lessonProgress            LessonProgress[]
+  purchases                 CoursePurchase[]
 }
 
 model Course {
-  id                   Int       @id @default(autoincrement())
-  title                String
-  description          String
-  restrictedToAllowList Boolean  @default(false)
+  id                    Int       @id @default(autoincrement())
+  title                 String
+  description           String
+  restrictedToAllowList Boolean   @default(false)
+  isPaid                Boolean   @default(false)
+  priceCents            Int?
+  currency              String?
 
-  authorId             Int?
-  author               User?     @relation("CourseAuthor", fields: [authorId], references: [id])
+  authorId              Int?
+  author                User?     @relation("CourseAuthor", fields: [authorId], references: [id])
 
-  lessons              Lesson[]
-  enrollments          CourseEnrollment[]
-  allowedEmails        CourseAllowedEmail[]
+  lessons               Lesson[]
+  enrollments           CourseEnrollment[]
+  allowedEmails         CourseAllowedEmail[]
+  purchases             CoursePurchase[]
+}
+
+model CoursePurchase {
+  id                 Int                  @id @default(autoincrement())
+  status             CoursePurchaseStatus @default(PENDING)
+  checkoutSessionId  String               @unique
+  paymentIntentId    String?
+  stripeCustomerId   String?
+  amountCents        Int
+  currency           String
+  paidAt             DateTime?
+  expiresAt          DateTime?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  userId             Int
+  user               User                 @relation(fields: [userId], references: [id])
+
+  courseId           Int
+  course             Course               @relation(fields: [courseId], references: [id])
+
+  @@index([userId, courseId])
+  @@index([status])
+  @@index([checkoutSessionId])
+  @@index([paymentIntentId])
+}
+
+model StripeWebhookEvent {
+  id            Int      @id @default(autoincrement())
+  stripeEventId String   @unique
+  eventType     String
+  processedAt   DateTime @default(now())
 }
 
 model CourseAllowedEmail {
