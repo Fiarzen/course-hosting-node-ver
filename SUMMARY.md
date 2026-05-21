@@ -1,178 +1,138 @@
+# Claude Code Project Summary
+## Scope and source of truth
+This summary is based on:
+- TypeScript source in `src/**/*.ts`
+- Prisma schema in `prisma/schema.prisma`
+- compiled JavaScript in `dist/**/*.js` for cross-checking
 
-## Scope
-This summary is based on JavaScript files in `dist/`, including `dist/server.js` and `dist/db.js`, plus related `dist/routes/*`, `dist/middleware/*`, and `dist/services/storage.js`.
-
-No separate root-level `server.js` or `db.js` were found; the active runtime files appear to be the ones in `dist/`.
+For code changes, `src/` + `prisma/schema.prisma` should be treated as canonical.
 
 ## What this project is
-Node.js + Express backend for course hosting / LMS workflows:
-- user registration and auth
-- role-based course creation and access management
-- lesson CRUD and ordering
-- enrollment and lesson-completion progress tracking
-- PDF lesson asset upload (S3 or local fallback)
+Express + Prisma backend for a course platform with:
+- account registration/login and token auth
+- role-based permissions (`STUDENT`, `CREATOR`, `ADMIN`)
+- course creation, course access allowlists, and deletion cleanup
+- lesson CRUD/reorder plus PDF attachments
+- course enrollment and lesson completion progress
 
-Database access uses Prisma via a shared singleton client.
-
-## Server bootstrap (`dist/server.js`)
+## Entry point and app wiring (`src/server.ts`)
 - Loads env via `dotenv`.
-- Starts Express app on `PORT` (default `8080`).
-- Configures CORS with `CORS_ALLOWED_ORIGINS` (comma-separated) and credentials enabled.
-- Parses JSON bodies.
-- Serves static uploads from `uploads` under `/files`.
-- Mounts public routers:
+- Configures CORS from `CORS_ALLOWED_ORIGINS` (CSV list), allows credentials.
+- Parses JSON request bodies.
+- Serves local uploads directory at `/files`.
+- Public mounts:
   - `/auth`
-  - `/users` (public subset)
-  - `/courses` (public subset)
-- Applies auth middleware globally after public mounts.
-- Mounts protected routers:
-  - `/users` (protected subset)
-  - `/courses` (protected subset)
+  - `/users` (public router)
+  - `/courses` (public router)
+- Applies `authMiddleware` for protected routes, then mounts:
+  - `/users` (protected router)
+  - `/courses` (protected router)
   - `/lessons`
   - `/enrollments`
-- Health/root endpoint: `GET /` returns `{ message: "Courses Node backend is running" }`.
-- Global error handler logs and returns `500 { error: "Internal server error" }`.
+- Root route: `GET /` -> backend running message.
+- Global JSON 500 handler.
 
-## DB layer (`dist/db.js`)
-- Exports `prisma` from `@prisma/client`.
-- Uses a global singleton pattern (`global.prisma`) to avoid multiple Prisma clients in dev/hot-reload scenarios.
-- Prisma logging is configured for `error` and `warn`.
+## DB access (`src/db.ts`)
+- Shared Prisma singleton client to avoid duplicate clients in dev reload scenarios.
+- Prisma client logs `warn` and `error`.
 
-## Authentication and authorization
-### Auth middleware (`dist/middleware/auth.js`)
+## Auth and authorization
+### Token auth (`src/middleware/auth.ts`)
 - Reads `Authorization: Bearer <token>`.
-- Looks up user by `authToken`.
-- If found, attaches `req.user = { id, email, role }`.
-- Always calls `next()`; missing/invalid token does not throw by itself.
+- Looks up user by `User.authToken`.
+- Sets `req.user = { id, email, role }` if valid.
+- Does not reject requests directly; route handlers perform checks.
 
-### Role guard helpers (`dist/middleware/roles.js`)
-- `requireAuth`: returns `401` if unauthenticated.
-- `requireAnyRole(roles)`: returns `401` or `403` as needed.
-- Most route files also include explicit inline role checks.
+### Role checks (`src/middleware/roles.ts`)
+- Utility middleware exists (`requireAuth`, `requireAnyRole`) but most route files perform inline auth/role checks.
 
-### Role model seen in routes
-- `STUDENT`
-- `CREATOR`
-- `ADMIN`
+## Route behavior
+### `/auth` (`src/routes/auth.ts`)
+- `POST /auth/login`: validates credentials, sets new UUID `authToken`, returns token + safe user.
+- `POST /auth/reset-password`: validates reset token + expiry, hashes new password, clears reset/auth tokens.
 
-## Route map
-## `/auth` (`dist/routes/auth.js`)
-- `POST /auth/login`
-  - Validates email/password.
-  - Uses bcrypt compare against stored hash.
-  - Generates UUID token, stores in `user.authToken`.
-  - Returns `{ token, user }` (password stripped).
-- `POST /auth/reset-password`
-  - Requires `{ token, newPassword }`.
-  - Validates reset token + expiry.
-  - Re-hashes password, clears reset token fields and `authToken`.
-
-## `/users` (`dist/routes/users.js`)
+### `/users` (`src/routes/users.ts`)
 Public:
-- `POST /users/register`
-  - Creates student user with bcrypt-hashed password.
-  - Rejects duplicate email.
+- `POST /users/register`: creates `STUDENT` user, bcrypt password hash, unique email check.
 
 Protected:
-- `GET /users`
-  - Admin-only list of users (password removed).
-- `GET /users/me`
-  - Returns authenticated user profile.
-- `POST /users/:userId/upgrade-to-creator`
-  - Admin-only role change to `CREATOR`.
-- `POST /users/:userId/reset-password`
-  - Admin-only generation of reset token + 1-hour expiry.
-  - Returns reset token and `resetPath`.
+- `GET /users`: admin-only list (password removed).
+- `GET /users/me`: current user profile.
+- `POST /users/:userId/upgrade-to-creator`: admin-only role upgrade.
+- `POST /users/:userId/reset-password`: admin-generated reset token + expiry.
 
-## `/courses` (`dist/routes/courses.js`)
+### `/courses` (`src/routes/courses.ts`)
 Public:
-- `GET /courses`
-  - Lists courses visible under allowlist logic.
-  - Includes `allowedEmails` and `author`.
+- `GET /courses`: list filtered by allowlist visibility logic.
 
 Protected:
-- `POST /courses`
-  - Creator/admin can create course.
-- `GET /courses/my-created`
-  - Returns courses authored by current user.
-- `GET /courses/:courseId/access`
-  - Author/admin can view allowlist config.
-- `PUT /courses/:courseId/access`
-  - Author/admin can set `restrictedToAllowList` and replace allowlist emails.
-- `DELETE /courses/:courseId`
-  - Author/admin delete with cleanup transaction:
-    - lesson progress
-    - lessons
-    - enrollments
-    - allowed email rows
-    - course row
+- `POST /courses`: creator/admin only.
+- `GET /courses/my-created`: authored courses.
+- `GET /courses/:courseId/access`: author/admin access settings.
+- `PUT /courses/:courseId/access`: replace allowlist + restricted flag in transaction.
+- `DELETE /courses/:courseId`: author/admin only, cascades cleanup of lessons/progress/enrollments/allowlist rows.
 
-## `/lessons` (`dist/routes/lessons.js`)
-- `GET /lessons`
-  - Auth required.
-  - Admin sees all lessons.
-  - Others see lessons from enrolled or authored courses.
-- `GET /lessons/course/:courseId`
-  - Auth required.
-  - Returns full lessons only if admin/author/enrolled-and-allowlisted.
-  - Otherwise returns limited lesson summaries.
-- `POST /lessons`
-  - Auth + author/admin.
-  - Supports multipart upload (`pdf` file).
-  - Appends lesson order by `count + 1`.
-- `GET /lessons/:lessonId`
-  - Auth + full-content visibility checks.
-- `PUT /lessons/:lessonId`
-  - Auth + author/admin.
-  - Supports replacing/clearing PDF.
-- `DELETE /lessons/:lessonId`
-  - Auth + author/admin.
-  - Deletes related lesson progress first.
-- `POST /lessons/course/:courseId/reorder`
-  - Auth + author/admin.
-  - Rewrites `orderIndex` based on provided lesson-id list.
+### `/lessons` (`src/routes/lessons.ts`)
+- Auth required across endpoints.
+- Visibility requires admin/author OR (allowlisted + enrolled) for full content.
+- `GET /lessons`, `GET /lessons/course/:courseId`, `GET /lessons/:lessonId`: return signed PDF URLs when PDF is S3-backed.
+- `POST /lessons`: author/admin per-course, multipart upload (`pdf`), assigns incremental `orderIndex`.
+- `PUT /lessons/:lessonId`: author/admin update, supports replacing or clearing PDF.
+- `DELETE /lessons/:lessonId`: author/admin delete with lesson progress cleanup.
+- `POST /lessons/course/:courseId/reorder`: author/admin reorder by posted lesson-id array.
 
-## `/enrollments` (`dist/routes/enrollments.js`)
-- `POST /enrollments/courses/:courseId`
-  - Auth required.
-  - Enforces allowlist restrictions unless admin/author.
-  - Prevents duplicate enrollment.
-- `GET /enrollments/my-courses`
-  - Returns enrolled courses plus computed progress stats.
-- `DELETE /enrollments/courses/:courseId`
-  - Unenrolls and removes related lesson progress for that user/course.
-- `POST /enrollments/lessons/:lessonId/complete`
-  - Marks lesson as completed (upsert).
-- `GET /enrollments/courses/:courseId/progress`
-  - Returns per-lesson completion state and overall progress %.
+### `/enrollments` (`src/routes/enrollments.ts`)
+- `POST /enrollments/courses/:courseId`: enroll self (allowlist restrictions enforced unless admin/author).
+- `GET /enrollments/my-courses`: includes total/completed lesson counts and progress %.
+- `DELETE /enrollments/courses/:courseId`: unenroll + remove course-specific lesson progress.
+- `POST /enrollments/lessons/:lessonId/complete`: upsert lesson completion record.
+- `GET /enrollments/courses/:courseId/progress`: per-lesson completion + aggregate progress.
 
-## File upload and storage (`dist/services/storage.js`)
-- Uses `multer.memoryStorage()` and expects file field name `pdf`.
-- If `AWS_S3_ENABLED === "true"` and bucket is configured:
-  - uploads to `s3://<bucket>/pdfs/<uuid>_<originalname>`
-  - returns public S3 URL.
-- On S3 failure or disabled config:
-  - writes to local `uploads/pdfs/`
-  - returns `/files/pdfs/<filename>` (served by static `/files` route).
+## File storage and PDF URLs (`src/services/storage.ts`)
+- Uses multer memory storage (`upload.single("pdf")`).
+- S3 mode enabled by `AWS_S3_ENABLED === "true"` and bucket presence.
+- Supports custom S3-compatible endpoint via `AWS_ENDPOINT_URL` (path-style forced).
+- On upload:
+  - stores object at key `pdfs/<uuid>_<originalname>`
+  - persists the **S3 key** (not full public URL) in `Lesson.pdfUrl`
+- Retrieval:
+  - `getSignedPdfUrl` returns original local `/files/...` paths as-is
+  - for S3 keys, returns 1-hour signed URL via `GetObjectCommand`
+- Local fallback writes files to `uploads/pdfs` and stores `/files/pdfs/<name>`.
 
-## Inferred core entities (from Prisma usage)
-- `User` (email, password hash, role, auth token, password reset token/expiry)
-- `Course` (author, allowlist restriction flag)
+## Prisma schema (`prisma/schema.prisma`)
+Datasource:
+- PostgreSQL via `DATABASE_URL`.
+
+Models and key constraints:
+- `User`
+  - unique: `email`, `authToken`
+  - fields: role, password reset token + expiry
+- `Course`
+  - optional author relation to `User` (`CourseAuthor`)
+  - allowlist gate: `restrictedToAllowList`
 - `CourseAllowedEmail`
-- `Lesson` (order index, optional video URL, optional PDF URL)
+  - unique composite: `[courseId, email]`
+- `Lesson`
+  - belongs to `Course`
+  - optional `videoUrl`, optional `pdfUrl`, optional `orderIndex`
 - `CourseEnrollment`
+  - unique composite: `[userId, courseId]`
 - `LessonProgress`
+  - unique composite: `[userId, lessonId]`
+  - tracks `completed` + `completedAt`
 
-## Key environment variables
+## Important env vars
+- `DATABASE_URL`
 - `PORT`
 - `CORS_ALLOWED_ORIGINS`
 - `AWS_S3_ENABLED`
 - `AWS_S3_BUCKET_NAME`
 - `AWS_REGION`
+- `AWS_ENDPOINT_URL` (optional, for S3-compatible providers)
 
-## Claude Code notes
-- Start request tracing at `dist/server.js` to see route and middleware order.
-- Route behavior is organized by domain under `dist/routes/`.
-- Access-control logic is split between middleware (`auth.js`, `roles.js`) and inline checks in routes.
-- For file storage bugs, inspect `dist/services/storage.js` plus `/files` static serving setup in `dist/server.js`.
-- If this repo also has non-`dist` source files (e.g., TypeScript), prefer editing source and rebuilding `dist` to avoid drift.
+## Claude Code guidance
+- Prefer editing `src/**/*.ts` and `prisma/schema.prisma`; regenerate `dist` afterward.
+- Trace request flow from `src/server.ts` into the route modules.
+- For PDF/download bugs, inspect both upload path and signed-URL path in `src/services/storage.ts`.
+- If behavior appears different between `src` and `dist`, trust `src` as implementation intent and rebuild to sync artifacts.

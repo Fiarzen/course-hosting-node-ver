@@ -31,6 +31,16 @@ enrollmentsRouter.post("/courses/:courseId", async (req: AuthenticatedRequest, r
     }
   }
 
+  // Payment gate: paid courses require a succeeded purchase
+  if (course.isPaid) {
+    const succeededPurchase = await prisma.coursePurchase.findFirst({
+      where: { userId: dbUser.id, courseId, status: "SUCCEEDED" },
+    });
+    if (!succeededPurchase) {
+      return res.status(402).json({ error: "Payment required for this course", code: "PAYMENT_REQUIRED" });
+    }
+  }
+
   const existing = await prisma.courseEnrollment.findUnique({
     where: {
       userId_courseId: {

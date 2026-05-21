@@ -8,6 +8,8 @@ import { usersRouter } from "./routes/users";
 import { coursesRouter } from "./routes/courses";
 import { lessonsRouter } from "./routes/lessons";
 import { enrollmentsRouter } from "./routes/enrollments";
+import { paymentsRouter } from "./routes/payments";
+import { webhooksRouter } from "./routes/webhooks";
 import { authMiddleware } from "./middleware/auth";
 
 dotenv.config();
@@ -39,6 +41,9 @@ app.use(
   }),
 );
 
+// Webhook endpoint must receive the raw body for Stripe signature verification
+app.use("/webhooks", express.raw({ type: "application/json" }), webhooksRouter);
+
 app.use(express.json());
 
 // Static file handling equivalent to /files/** from uploads
@@ -49,7 +54,7 @@ app.use("/files", express.static(uploadsDir));
 app.use("/auth", authRouter);
 app.use("/users", usersRouter.publicRouter);
 app.use("/courses", coursesRouter.publicRouter);
-app.use("/files", (req, res, next) => next()); // already static above
+app.use("/files", (_req, _res, next) => next()); // already static above
 
 // Auth middleware for protected routes
 app.use(authMiddleware);
@@ -59,6 +64,7 @@ app.use("/users", usersRouter.protectedRouter);
 app.use("/courses", coursesRouter.protectedRouter);
 app.use("/lessons", lessonsRouter);
 app.use("/enrollments", enrollmentsRouter);
+app.use("/payments", paymentsRouter);
 
 // Simple root similar to HelloController
 app.get("/", (_req, res) => {
