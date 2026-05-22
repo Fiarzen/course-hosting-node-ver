@@ -52,9 +52,12 @@ model Course {
 model CoursePurchase {
   id                 Int                  @id @default(autoincrement())
   status             CoursePurchaseStatus @default(PENDING)
-  checkoutSessionId  String               @unique
+  paymentMethod      String               @default("STRIPE")
+  checkoutSessionId  String?              @unique
   paymentIntentId    String?
   stripeCustomerId   String?
+  paypalOrderId      String?              @unique
+  paypalCaptureId    String?
   amountCents        Int
   currency           String
   paidAt             DateTime?
@@ -70,8 +73,10 @@ model CoursePurchase {
 
   @@index([userId, courseId])
   @@index([status])
+  @@index([paymentMethod])
   @@index([checkoutSessionId])
   @@index([paymentIntentId])
+  @@index([paypalOrderId])
 }
 
 model StripeWebhookEvent {
