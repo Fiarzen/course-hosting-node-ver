@@ -5,6 +5,7 @@ export const prisma = {
     create: jest.fn(),
     update: jest.fn(),
     findMany: jest.fn(),
+    delete: jest.fn(),
   },
   course: {
     findMany: jest.fn(),
@@ -12,6 +13,7 @@ export const prisma = {
     create: jest.fn(),
     update: jest.fn(),
     delete: jest.fn(),
+    deleteMany: jest.fn(),
   },
   courseEnrollment: {
     findUnique: jest.fn(),
@@ -22,6 +24,7 @@ export const prisma = {
   },
   coursePurchase: {
     findFirst: jest.fn(),
+    deleteMany: jest.fn(),
   },
   lesson: {
     findUnique: jest.fn(),

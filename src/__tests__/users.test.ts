@@ -1,7 +1,7 @@
 import request from "supertest";
 import { app } from "../app";
 import { prisma } from "../db";
-import { mockUser, mockAdmin } from "./helpers";
+import { mockUser, mockAdmin, mockCreator, mockCourse } from "./helpers";
 
 jest.mock("../db");
 jest.mock("../services/email", () => ({
@@ -130,5 +130,134 @@ describe("POST /users/:id/upgrade-to-creator", () => {
     expect(res.status).toBe(200);
     expect(res.body.user.role).toBe("CREATOR");
     expect(res.body.user).not.toHaveProperty("password");
+  });
+});
+
+describe("DELETE /users/:userId", () => {
+  const targetUser = { ...mockUser, id: 7, role: "STUDENT" };
+
+  function setupAdminAuth() {
+    (db.user.findUnique as jest.Mock).mockImplementation(({ where }: any) => {
+      if (where.authToken !== undefined) return Promise.resolve(where.authToken === "admin-token" ? mockAdmin : null);
+      if (where.id === mockAdmin.id) return Promise.resolve(mockAdmin);
+      if (where.id === targetUser.id) return Promise.resolve(targetUser);
+      return Promise.resolve(null);
+    });
+  }
+
+  beforeEach(() => {
+    (db.$transaction as jest.Mock).mockImplementation((fn: any) => fn(db));
+    (db.course.findMany as jest.Mock).mockResolvedValue([]);
+    (db.lesson.findMany as jest.Mock).mockResolvedValue([]);
+    (db.lessonProgress.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
+    (db.lesson.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
+    (db.courseEnrollment.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
+    (db.courseAllowedEmail.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
+    (db.coursePurchase.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
+    (db.course.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
+    (db.user.delete as jest.Mock).mockResolvedValue(targetUser);
+  });
+
+  it("returns 401 when not authenticated", async () => {
+    const res = await request(app).delete(`/users/${targetUser.id}`);
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 403 when caller is not ADMIN", async () => {
+    (db.user.findUnique as jest.Mock).mockImplementation(({ where }: any) => {
+      if (where.authToken !== undefined) return Promise.resolve(where.authToken === "student-token" ? mockUser : null);
+      if (where.id !== undefined) return Promise.resolve(mockUser);
+      return Promise.resolve(null);
+    });
+
+    const res = await request(app)
+      .delete(`/users/${targetUser.id}`)
+      .set("Authorization", "Bearer student-token");
+    expect(res.status).toBe(403);
+  });
+
+  it("returns 400 when admin tries to delete themselves", async () => {
+    setupAdminAuth();
+
+    const res = await request(app)
+      .delete(`/users/${mockAdmin.id}`)
+      .set("Authorization", "Bearer admin-token");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/own account/i);
+  });
+
+  it("returns 404 when target user not found", async () => {
+    (db.user.findUnique as jest.Mock).mockImplementation(({ where }: any) => {
+      if (where.authToken !== undefined) return Promise.resolve(where.authToken === "admin-token" ? mockAdmin : null);
+      if (where.id === mockAdmin.id) return Promise.resolve(mockAdmin);
+      return Promise.resolve(null);
+    });
+
+    const res = await request(app)
+      .delete("/users/999")
+      .set("Authorization", "Bearer admin-token");
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 when target is an ADMIN", async () => {
+    const otherAdmin = { ...mockAdmin, id: 99, email: "other-admin@example.com" };
+    (db.user.findUnique as jest.Mock).mockImplementation(({ where }: any) => {
+      if (where.authToken !== undefined) return Promise.resolve(where.authToken === "admin-token" ? mockAdmin : null);
+      if (where.id === mockAdmin.id) return Promise.resolve(mockAdmin);
+      if (where.id === otherAdmin.id) return Promise.resolve(otherAdmin);
+      return Promise.resolve(null);
+    });
+
+    const res = await request(app)
+      .delete(`/users/${otherAdmin.id}`)
+      .set("Authorization", "Bearer admin-token");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/ADMIN/);
+  });
+
+  it("returns 200 and deletes user with no authored courses", async () => {
+    setupAdminAuth();
+
+    const res = await request(app)
+      .delete(`/users/${targetUser.id}`)
+      .set("Authorization", "Bearer admin-token");
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toBe("User deleted successfully");
+    expect(db.user.delete).toHaveBeenCalledWith({ where: { id: targetUser.id } });
+    expect(db.course.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("cascades deletes authored courses and all related data", async () => {
+    setupAdminAuth();
+    const authoredCourse = { ...mockCourse, id: 20, authorId: targetUser.id };
+    const authoredLesson = { id: 50, courseId: 20, title: "Lesson", orderIndex: 1 };
+    (db.course.findMany as jest.Mock).mockResolvedValue([authoredCourse]);
+    (db.lesson.findMany as jest.Mock).mockResolvedValue([authoredLesson]);
+
+    const res = await request(app)
+      .delete(`/users/${targetUser.id}`)
+      .set("Authorization", "Bearer admin-token");
+
+    expect(res.status).toBe(200);
+    expect(db.lessonProgress.deleteMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { lessonId: { in: [authoredLesson.id] } } })
+    );
+    expect(db.lesson.deleteMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [authoredLesson.id] } } })
+    );
+    expect(db.courseEnrollment.deleteMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { courseId: { in: [authoredCourse.id] } } })
+    );
+    expect(db.courseAllowedEmail.deleteMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { courseId: { in: [authoredCourse.id] } } })
+    );
+    expect(db.coursePurchase.deleteMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { courseId: { in: [authoredCourse.id] } } })
+    );
+    expect(db.course.deleteMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [authoredCourse.id] } } })
+    );
+    expect(db.user.delete).toHaveBeenCalledWith({ where: { id: targetUser.id } });
   });
 });
