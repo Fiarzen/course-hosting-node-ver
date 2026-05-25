@@ -7,6 +7,9 @@ RUN apt-get update \
   && apt-get install -y openssl ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
+# Upgrade npm to 11 so npm ci handles optional wasm32 deps correctly (node:22 ships npm 10)
+RUN npm install -g npm@11
+
 # Copy package files
 COPY package*.json ./
 COPY prisma ./prisma
