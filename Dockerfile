@@ -19,6 +19,7 @@ RUN npm install --omit=optional
 # Copy source and build
 COPY src ./src
 COPY tsconfig.json ./
+COPY prisma.config.ts ./
 RUN npm run build
 
 RUN echo "=== Build artifacts ===" && ls -la dist/
