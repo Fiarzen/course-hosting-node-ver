@@ -7,6 +7,9 @@ export const mockUser = {
   authToken: "student-token",
   passwordResetToken: null,
   passwordResetTokenExpiry: null,
+  emailVerified: false,
+  emailVerificationToken: null,
+  emailVerificationTokenExpiry: null,
   createdAt: new Date("2025-01-01"),
   updatedAt: new Date("2025-01-01"),
 };

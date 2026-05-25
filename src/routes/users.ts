@@ -3,6 +3,10 @@ import bcrypt from "bcrypt";
 import crypto from "crypto";
 import { prisma } from "../db";
 import { AuthenticatedRequest } from "../middleware/auth";
+import {
+  sendVerificationEmail,
+  sendAdminPasswordResetEmail,
+} from "../services/email";
 
 const publicRouter = Router();
 const protectedRouter = Router();
@@ -21,14 +25,19 @@ publicRouter.post("/register", async (req, res) => {
   }
 
   const hashed = await bcrypt.hash(password, 10);
+  const verificationToken = crypto.randomUUID();
   const user = await prisma.user.create({
     data: {
       name: name || null,
       email,
       password: hashed,
       role: "STUDENT",
+      emailVerificationToken: verificationToken,
+      emailVerificationTokenExpiry: new Date(Date.now() + 60 * 60 * 1000),
     },
   });
+
+  await sendVerificationEmail(email, verificationToken);
 
   const { password: _pw, ...safeUser } = user as any;
   return res.status(201).json(safeUser);
@@ -109,6 +118,8 @@ protectedRouter.post("/:userId/reset-password", async (req: AuthenticatedRequest
       passwordResetTokenExpiry: expiresAt,
     },
   });
+
+  await sendAdminPasswordResetEmail(user.email, token);
 
   const resetPath = `/reset-password?token=${token}`;
 

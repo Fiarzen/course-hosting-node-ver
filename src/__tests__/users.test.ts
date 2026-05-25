@@ -4,6 +4,10 @@ import { prisma } from "../db";
 import { mockUser, mockAdmin } from "./helpers";
 
 jest.mock("../db");
+jest.mock("../services/email", () => ({
+  sendVerificationEmail: jest.fn().mockResolvedValue(undefined),
+  sendAdminPasswordResetEmail: jest.fn().mockResolvedValue(undefined),
+}));
 
 const db = prisma as jest.Mocked<typeof prisma>;
 
