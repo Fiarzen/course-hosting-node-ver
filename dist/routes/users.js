@@ -8,6 +8,7 @@ const express_1 = require("express");
 const bcrypt_1 = __importDefault(require("bcrypt"));
 const crypto_1 = __importDefault(require("crypto"));
 const db_1 = require("../db");
+const email_1 = require("../services/email");
 const publicRouter = (0, express_1.Router)();
 const protectedRouter = (0, express_1.Router)();
 // POST /users/register
@@ -21,14 +22,18 @@ publicRouter.post("/register", async (req, res) => {
         return res.status(409).json({ error: "Email already registered" });
     }
     const hashed = await bcrypt_1.default.hash(password, 10);
+    const verificationToken = crypto_1.default.randomUUID();
     const user = await db_1.prisma.user.create({
         data: {
             name: name || null,
             email,
             password: hashed,
             role: "STUDENT",
+            emailVerificationToken: verificationToken,
+            emailVerificationTokenExpiry: new Date(Date.now() + 60 * 60 * 1000),
         },
     });
+    await (0, email_1.sendVerificationEmail)(email, verificationToken);
     const { password: _pw, ...safeUser } = user;
     return res.status(201).json(safeUser);
 });
@@ -97,6 +102,7 @@ protectedRouter.post("/:userId/reset-password", async (req, res) => {
             passwordResetTokenExpiry: expiresAt,
         },
     });
+    await (0, email_1.sendAdminPasswordResetEmail)(user.email, token);
     const resetPath = `/reset-password?token=${token}`;
     return res.json({
         message: "Password reset link generated",
