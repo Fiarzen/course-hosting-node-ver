@@ -7,15 +7,14 @@ RUN apt-get update \
   && apt-get install -y openssl ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-# Upgrade npm to 11 so npm ci handles optional wasm32 deps correctly (node:22 ships npm 10)
-RUN npm install -g npm@11
-
 # Copy package files
 COPY package*.json ./
 COPY prisma ./prisma
 
-# Install ALL dependencies (including prisma as devDependency)
-RUN npm ci --omit=optional
+# npm ci rejects the lock file because optional wasm32 packages (@unrs/resolver-binding-wasm32-wasi)
+# list deps (@emnapi/core, @emnapi/runtime) that are absent from the lock file on x86_64.
+# npm install respects locked versions but tolerates platform-incompatible optional dep metadata.
+RUN npm install --omit=optional
 
 # Copy source and build
 COPY src ./src
