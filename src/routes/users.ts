@@ -130,4 +130,57 @@ protectedRouter.post("/:userId/reset-password", async (req: AuthenticatedRequest
   });
 });
 
+// DELETE /users/:userId (admin only)
+protectedRouter.delete("/:userId", async (req: AuthenticatedRequest, res) => {
+  if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+
+  const admin = await prisma.user.findUnique({ where: { id: req.user.id } });
+  if (!admin || admin.role !== "ADMIN") {
+    return res.status(403).json({ error: "Only admins can delete users" });
+  }
+
+  const userId = Number(req.params.userId);
+  if (isNaN(userId)) return res.status(400).json({ error: "Invalid user ID" });
+
+  if (userId === req.user.id) {
+    return res.status(400).json({ error: "Admins cannot delete their own account" });
+  }
+
+  const target = await prisma.user.findUnique({ where: { id: userId } });
+  if (!target) return res.status(404).json({ error: "User not found" });
+
+  if (target.role === "ADMIN") {
+    return res.status(400).json({ error: "Cannot delete an ADMIN account" });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const authoredCourses = await tx.course.findMany({ where: { authorId: userId } });
+    const authoredCourseIds = authoredCourses.map((c) => c.id);
+
+    if (authoredCourseIds.length > 0) {
+      const authoredLessons = await tx.lesson.findMany({
+        where: { courseId: { in: authoredCourseIds } },
+      });
+      const authoredLessonIds = authoredLessons.map((l) => l.id);
+
+      if (authoredLessonIds.length > 0) {
+        await tx.lessonProgress.deleteMany({ where: { lessonId: { in: authoredLessonIds } } });
+        await tx.lesson.deleteMany({ where: { id: { in: authoredLessonIds } } });
+      }
+
+      await tx.courseEnrollment.deleteMany({ where: { courseId: { in: authoredCourseIds } } });
+      await tx.courseAllowedEmail.deleteMany({ where: { courseId: { in: authoredCourseIds } } });
+      await tx.coursePurchase.deleteMany({ where: { courseId: { in: authoredCourseIds } } });
+      await tx.course.deleteMany({ where: { id: { in: authoredCourseIds } } });
+    }
+
+    await tx.lessonProgress.deleteMany({ where: { userId } });
+    await tx.courseEnrollment.deleteMany({ where: { userId } });
+    await tx.coursePurchase.deleteMany({ where: { userId } });
+    await tx.user.delete({ where: { id: userId } });
+  });
+
+  return res.json({ message: "User deleted successfully" });
+});
+
 export const usersRouter = { publicRouter, protectedRouter };
