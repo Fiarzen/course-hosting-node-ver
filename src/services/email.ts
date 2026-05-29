@@ -1,27 +1,29 @@
-import { Resend } from "resend";
+import sgMail from "@sendgrid/mail";
 
-let _resend: Resend | null = null;
-
-function resend(): Resend {
-  const key = process.env.RESEND_API_KEY;
-  if (!key) throw new Error("RESEND_API_KEY is not set");
-  if (!_resend) _resend = new Resend(key);
-  return _resend;
+function getSgMail(): typeof sgMail {
+  const key = process.env.SENDGRID_API_KEY;
+  if (!key) throw new Error("SENDGRID_API_KEY is not set");
+  sgMail.setApiKey(key);
+  return sgMail;
 }
 
 function frontendUrl(): string {
   return process.env.FRONTEND_URL ?? "https://mind-leaf.netlify.app";
 }
 
-const FROM = "noreply@resend.dev";
+function fromAddress(): string {
+  const from = process.env.EMAIL_FROM;
+  if (!from) throw new Error("EMAIL_FROM is not set");
+  return from;
+}
 
 export async function sendVerificationEmail(
   to: string,
   token: string,
 ): Promise<void> {
   const link = `${frontendUrl()}/verify-email?token=${token}`;
-  await resend().emails.send({
-    from: FROM,
+  await getSgMail().send({
+    from: fromAddress(),
     to,
     subject: "Verify your mindleaf account",
     text: `Click the link below to verify your email address:\n\n${link}\n\nThis link expires in 1 hour. If you didn't create a mindleaf account, you can ignore this email.`,
@@ -34,8 +36,8 @@ export async function sendPasswordResetEmail(
   token: string,
 ): Promise<void> {
   const link = `${frontendUrl()}/reset-password?token=${token}`;
-  await resend().emails.send({
-    from: FROM,
+  await getSgMail().send({
+    from: fromAddress(),
     to,
     subject: "Reset your mindleaf password",
     text: `Click the link below to reset your password:\n\n${link}\n\nThis link expires in 1 hour. If you didn't request a password reset, you can ignore this email.`,
@@ -48,8 +50,8 @@ export async function sendAdminPasswordResetEmail(
   token: string,
 ): Promise<void> {
   const link = `${frontendUrl()}/reset-password?token=${token}`;
-  await resend().emails.send({
-    from: FROM,
+  await getSgMail().send({
+    from: fromAddress(),
     to,
     subject: "Your mindleaf password has been reset",
     text: `An administrator has initiated a password reset for your account. Click the link below to set a new password:\n\n${link}\n\nThis link expires in 1 hour.`,
