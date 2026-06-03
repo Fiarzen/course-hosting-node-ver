@@ -3,45 +3,12 @@ import { prisma } from "../db";
 import { AuthenticatedRequest } from "../middleware/auth";
 import { upload, uploadPdfFromRequest } from "../services/storage";
 import { getSignedPdfUrl } from "../services/storage";
+import {
+  isAdmin,
+  isCourseAuthor,
+  canViewFullLessonContent,
+} from "./courseAccess";
 export const lessonsRouter = Router();
-
-function isAdmin(user: any | null) {
-  return user && user.role === "ADMIN";
-}
-
-async function isCourseAuthor(user: any | null, courseId: number) {
-  if (!user) return false;
-  const course = await prisma.course.findUnique({ where: { id: courseId } });
-  return !!course && course.authorId === user.id;
-}
-
-async function isEnrolledInCourse(userId: number, courseId: number) {
-  const count = await prisma.courseEnrollment.count({
-    where: { userId, courseId },
-  });
-  return count > 0;
-}
-
-async function isOnCourseAllowList(email: string, courseId: number) {
-  const course = await prisma.course.findUnique({
-    where: { id: courseId },
-    include: { allowedEmails: true },
-  });
-  if (!course) return false;
-  if (!course.restrictedToAllowList) return true;
-  const normalized = email.toLowerCase();
-  return course.allowedEmails.some((e) => e.email.toLowerCase() === normalized);
-}
-
-async function canViewFullLessonContent(user: any | null, courseId: number) {
-  if (!user) return false;
-  const course = await prisma.course.findUnique({ where: { id: courseId } });
-  if (!course) return false;
-  if (isAdmin(user) || (course.authorId && course.authorId === user.id))
-    return true;
-  if (!(await isOnCourseAllowList(user.email, courseId))) return false;
-  return await isEnrolledInCourse(user.id, courseId);
-}
 
 // GET /lessons
 // GET /lessons

@@ -49,6 +49,7 @@ model Course {
   enrollments           CourseEnrollment[]
   allowedEmails         CourseAllowedEmail[]
   purchases             CoursePurchase[]
+  assessments           Assessment[]
 }
 
 model CoursePurchase {
@@ -137,4 +138,43 @@ model LessonProgress {
   lesson      Lesson   @relation(fields: [lessonId], references: [id])
 
   @@unique([userId, lessonId])
+}
+
+model Assessment {
+  id          Int      @id @default(autoincrement())
+  title       String
+  description String?
+  createdAt   DateTime @default(now())
+
+  courseId    Int
+  course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  questions   AssessmentQuestion[]
+
+  @@index([courseId])
+}
+
+model AssessmentQuestion {
+  id           Int      @id @default(autoincrement())
+  prompt       String
+  orderIndex   Int      @default(0)
+
+  assessmentId Int
+  assessment   Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  choices      AssessmentChoice[]
+
+  @@index([assessmentId])
+}
+
+model AssessmentChoice {
+  id         Int      @id @default(autoincrement())
+  text       String
+  isCorrect  Boolean  @default(false)
+  orderIndex Int      @default(0)
+
+  questionId Int
+  question   AssessmentQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([questionId])
 }

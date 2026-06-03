@@ -5,53 +5,15 @@ const express_1 = require("express");
 const db_1 = require("../db");
 const storage_1 = require("../services/storage");
 const storage_2 = require("../services/storage");
+const courseAccess_1 = require("./courseAccess");
 exports.lessonsRouter = (0, express_1.Router)();
-function isAdmin(user) {
-    return user && user.role === "ADMIN";
-}
-async function isCourseAuthor(user, courseId) {
-    if (!user)
-        return false;
-    const course = await db_1.prisma.course.findUnique({ where: { id: courseId } });
-    return !!course && course.authorId === user.id;
-}
-async function isEnrolledInCourse(userId, courseId) {
-    const count = await db_1.prisma.courseEnrollment.count({
-        where: { userId, courseId },
-    });
-    return count > 0;
-}
-async function isOnCourseAllowList(email, courseId) {
-    const course = await db_1.prisma.course.findUnique({
-        where: { id: courseId },
-        include: { allowedEmails: true },
-    });
-    if (!course)
-        return false;
-    if (!course.restrictedToAllowList)
-        return true;
-    const normalized = email.toLowerCase();
-    return course.allowedEmails.some((e) => e.email.toLowerCase() === normalized);
-}
-async function canViewFullLessonContent(user, courseId) {
-    if (!user)
-        return false;
-    const course = await db_1.prisma.course.findUnique({ where: { id: courseId } });
-    if (!course)
-        return false;
-    if (isAdmin(user) || (course.authorId && course.authorId === user.id))
-        return true;
-    if (!(await isOnCourseAllowList(user.email, courseId)))
-        return false;
-    return await isEnrolledInCourse(user.id, courseId);
-}
 // GET /lessons
 // GET /lessons
 exports.lessonsRouter.get("/", async (req, res) => {
     const user = req.user || null;
     if (!user)
         return res.status(401).json({ error: "Not authenticated" });
-    if (isAdmin(user)) {
+    if ((0, courseAccess_1.isAdmin)(user)) {
         const all = await db_1.prisma.lesson.findMany();
         // Generate signed URLs for PDFs
         for (let lesson of all) {
@@ -93,7 +55,7 @@ exports.lessonsRouter.get("/course/:courseId", async (req, res) => {
         where: { courseId },
         orderBy: [{ orderIndex: "asc" }, { id: "asc" }],
     });
-    if (!(await canViewFullLessonContent(user, courseId))) {
+    if (!(await (0, courseAccess_1.canViewFullLessonContent)(user, courseId))) {
         let index = 0;
         const summaries = orderedLessons.map((lesson) => ({
             id: lesson.id,
@@ -120,7 +82,7 @@ exports.lessonsRouter.get("/:lessonId", async (req, res) => {
     const lesson = await db_1.prisma.lesson.findUnique({ where: { id: lessonId } });
     if (!lesson)
         return res.status(404).json({ error: "Lesson not found" });
-    if (!(await canViewFullLessonContent(user, lesson.courseId))) {
+    if (!(await (0, courseAccess_1.canViewFullLessonContent)(user, lesson.courseId))) {
         return res.status(403).json({
             error: "You must be enrolled in the course (or be the author/admin) to view this lesson",
         });
@@ -136,8 +98,8 @@ exports.lessonsRouter.post("/", storage_1.upload.single("pdf"), async (req, res)
     const user = req.user || null;
     if (!user)
         return res.status(401).json({ error: "Not authenticated" });
-    if (!isAdmin(user) &&
-        !(await isCourseAuthor(user, Number(req.body.courseId)))) {
+    if (!(0, courseAccess_1.isAdmin)(user) &&
+        !(await (0, courseAccess_1.isCourseAuthor)(user, Number(req.body.courseId)))) {
         return res.status(403).json({
             error: "Only course authors or admins can create lessons for this course",
         });
@@ -177,7 +139,7 @@ exports.lessonsRouter.put("/:lessonId", storage_1.upload.single("pdf"), async (r
         where: { id: lesson.courseId },
     });
     const isAuthor = course && course.authorId === user.id;
-    if (!isAdmin(user) && !isAuthor) {
+    if (!(0, courseAccess_1.isAdmin)(user) && !isAuthor) {
         return res.status(403).json({
             error: "Only course authors or admins can update lessons for this course",
         });
@@ -214,7 +176,7 @@ exports.lessonsRouter.delete("/:lessonId", async (req, res) => {
         where: { id: lesson.courseId },
     });
     const isAuthor = course && course.authorId === user.id;
-    if (!isAdmin(user) && !isAuthor) {
+    if (!(0, courseAccess_1.isAdmin)(user) && !isAuthor) {
         return res.status(403).json({
             error: "Only course authors or admins can delete lessons for this course",
         });
@@ -233,7 +195,7 @@ exports.lessonsRouter.post("/course/:courseId/reorder", async (req, res) => {
     if (!course)
         return res.status(404).json({ error: "Course not found" });
     const isAuthor = course.authorId === user.id;
-    if (!isAdmin(user) && !isAuthor) {
+    if (!(0, courseAccess_1.isAdmin)(user) && !isAuthor) {
         return res.status(403).json({
             error: "Only course authors or admins can reorder lessons for this course",
         });

@@ -62,11 +62,22 @@ Protected:
 - `DELETE /courses/:courseId` — cascades lessons, progress, enrollments, allowlist.
 
 ### `/lessons`
-All auth-required. Content visibility: admin/author always; others need allowlist + enrollment.
+All auth-required. Content visibility: admin/author always; others need allowlist + enrollment. Access helpers (`isAdmin`, `isCourseAuthor`, `canViewFullLessonContent`, `canEditCourse`) live in `src/routes/courseAccess.ts` and are shared with `/assessments`.
 - `GET /lessons`, `GET /lessons/course/:courseId`, `GET /lessons/:lessonId`
 - `POST /lessons` — multipart, `pdf` field, increments `orderIndex`.
 - `PUT /lessons/:lessonId`, `DELETE /lessons/:lessonId`
 - `POST /lessons/course/:courseId/reorder`
+
+**`Lesson.content` holds sanitized HTML** (authored with a TipTap WYSIWYG editor on the frontend). The backend stores it as a plain string and does not sanitize; the frontend renders it through DOMPurify. Legacy lessons created before the editor hold plain text and the frontend falls back to `whitespace-pre-wrap`. The lesson PDF is embedded inline in the lesson view (iframe over the signed URL) with an "open in new tab" fallback link.
+
+### `/assessments`
+Standalone, **course-scoped** multiple-choice quizzes used as a **self-check** — questions and correct answers are persisted, but student attempts/scores are **not** stored anywhere. All auth-required; mounted after `authMiddleware` (single router, like `/lessons`).
+- `GET /assessments/course/:courseId` — list a course's assessments. Requires course view access (`canViewFullLessonContent`). **`isCorrect` is stripped** from choices for students; included only for the course author/admin (so they can edit).
+- `GET /assessments/:assessmentId` — single assessment, same `isCorrect`-stripping rule.
+- `POST /assessments/:assessmentId/check` — **stateless grader, no DB writes.** Body `{ answers: [{ questionId, choiceId }] }` → `{ assessmentId, score, total, results: [{ questionId, selectedChoiceId, correctChoiceId, isCorrect }] }`. This is how students see their score without correct answers ever reaching the client beforehand.
+- `POST /assessments` — CREATOR/ADMIN (course author or admin). JSON body `{ courseId, title, description?, questions: [{ prompt, choices: [{ text, isCorrect }] }] }`. Validates ≥1 question, ≥2 choices/question, ≥1 correct/question.
+- `PUT /assessments/:assessmentId` — author/admin; replaces title/description + questions/choices wholesale in a transaction (deletes old questions, cascade removes choices).
+- `DELETE /assessments/:assessmentId` — author/admin; cascades questions + choices.
 
 ### `/enrollments`
 - `POST /enrollments/courses/:courseId` — **payment gate**: paid courses return **402 `PAYMENT_REQUIRED`** if no `SUCCEEDED` purchase exists for that user/course. Free courses enroll immediately. Allowlist still enforced for both.
@@ -95,7 +106,7 @@ All auth-required.
 ## Error response shape
 All payment endpoints return: `{ "error": "human message", "code": "MACHINE_CODE" }`
 
-Key codes: `AUTH_REQUIRED`, `COURSE_NOT_FOUND`, `COURSE_NOT_PURCHASABLE`, `ALREADY_ENROLLED`, `NOT_ALLOWED_FOR_COURSE`, `PAYMENT_REQUIRED`, `CHECKOUT_CREATE_FAILED`, `STRIPE_SIGNATURE_INVALID`.
+Key codes: `AUTH_REQUIRED`, `COURSE_NOT_FOUND`, `COURSE_NOT_PURCHASABLE`, `ALREADY_ENROLLED`, `NOT_ALLOWED_FOR_COURSE`, `PAYMENT_REQUIRED`, `CHECKOUT_CREATE_FAILED`, `STRIPE_SIGNATURE_INVALID`. The `/assessments` routes use the same shape, adding `ASSESSMENT_NOT_FOUND` and `VALIDATION_ERROR`.
 
 ---
 
@@ -107,9 +118,12 @@ Key codes: `AUTH_REQUIRED`, `COURSE_NOT_FOUND`, `COURSE_NOT_PURCHASABLE`, `ALREA
 - `CoursePurchase` — `paymentMethod String @default("STRIPE")`, `checkoutSessionId String? @unique` (nullable — Stripe only), `paypalOrderId String? @unique` (nullable — PayPal only), `paypalCaptureId String?`, `paymentIntentId String?`, `stripeCustomerId String?`, `amountCents Int`, `currency String`, `status CoursePurchaseStatus`, `paidAt DateTime?`, `expiresAt DateTime?`.
 - `StripeWebhookEvent` — `stripeEventId String @unique`, `eventType String`. Also used for PayPal event deduplication (key prefixed `paypal-`).
 - `CourseAllowedEmail` — `[courseId, email]` unique composite.
-- `Lesson` — `orderIndex Int?`, `videoUrl String?`, `pdfUrl String?`.
+- `Lesson` — `content String` (sanitized HTML; see `/lessons`), `orderIndex Int?`, `videoUrl String?`, `pdfUrl String?`.
 - `CourseEnrollment` — `[userId, courseId]` unique composite.
 - `LessonProgress` — `[userId, lessonId]` unique composite, `completed Boolean`, `completedAt DateTime?`.
+- `Assessment` — `title`, `description String?`, `courseId` (→ `Course`, `onDelete: Cascade`). Has many `AssessmentQuestion`.
+- `AssessmentQuestion` — `prompt String`, `orderIndex Int`, `assessmentId` (→ `Assessment`, cascade). Has many `AssessmentChoice`.
+- `AssessmentChoice` — `text String`, `isCorrect Boolean @default(false)`, `orderIndex Int`, `questionId` (→ `AssessmentQuestion`, cascade). Single-correct in the UI (radio), but the boolean allows multi-correct later. No attempt/score model — assessments are self-checks only.
 
 **Enum:** `CoursePurchaseStatus { PENDING SUCCEEDED FAILED EXPIRED REFUNDED }`
 
@@ -175,4 +189,4 @@ PAYPAL_CANCEL_URL            # e.g. https://mind-leaf.netlify.app/payment/cancel
 - `CREATING_PAID_COURSE.md` — user-facing guide covering Stripe/PayPal setup, webhook registration, test cards, and purchase auditing.
 - `Stripe-plan.md` — original design spec for the payment feature (for reference; implementation may differ in minor details).
 - `.env.example` — template with all env vars.
-- `prisma/migrations/` — two migrations: `20260521_add_stripe_payments`, `20260522_add_paypal_payments`.
+- `prisma/migrations/` — `20260521_add_stripe_payments`, `20260522_add_paypal_payments`, `20260525_add_email_verification`, `20260603_add_assessments`.

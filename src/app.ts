@@ -7,6 +7,7 @@ import { authRouter } from "./routes/auth";
 import { usersRouter } from "./routes/users";
 import { coursesRouter } from "./routes/courses";
 import { lessonsRouter } from "./routes/lessons";
+import { assessmentsRouter } from "./routes/assessments";
 import { enrollmentsRouter } from "./routes/enrollments";
 import { paymentsRouter } from "./routes/payments";
 import { webhooksRouter } from "./routes/webhooks";
@@ -55,6 +56,7 @@ app.use(authMiddleware);
 app.use("/users", usersRouter.protectedRouter);
 app.use("/courses", coursesRouter.protectedRouter);
 app.use("/lessons", lessonsRouter);
+app.use("/assessments", assessmentsRouter);
 app.use("/enrollments", enrollmentsRouter);
 app.use("/payments", paymentsRouter);
 
