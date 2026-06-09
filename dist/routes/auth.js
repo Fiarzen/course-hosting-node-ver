@@ -86,6 +86,46 @@ exports.authRouter.post("/forgot-password", async (req, res) => {
     await (0, email_1.sendPasswordResetEmail)(email, token);
     return res.json({ message: "If that email is registered, a reset link has been sent." });
 });
+exports.authRouter.post("/change-password", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith("Bearer ")) {
+        return res.status(401).json({ error: "Authentication required" });
+    }
+    const sessionToken = authHeader.slice(7);
+    const user = await db_1.prisma.user.findUnique({ where: { authToken: sessionToken } });
+    const expired = user?.authTokenExpiry != null && user.authTokenExpiry < new Date();
+    if (!user || expired) {
+        return res.status(401).json({ error: "Authentication required" });
+    }
+    const { currentPassword, newPassword } = req.body || {};
+    if (!currentPassword || !newPassword) {
+        return res
+            .status(400)
+            .json({ error: "Current and new password are required" });
+    }
+    if (typeof newPassword !== "string" || newPassword.length < 6) {
+        return res
+            .status(400)
+            .json({ error: "Password must be at least 6 characters" });
+    }
+    const ok = await bcrypt_1.default.compare(currentPassword, user.password);
+    if (!ok) {
+        return res.status(401).json({ error: "Current password is incorrect" });
+    }
+    // Rotate the auth token so any other active sessions are invalidated, and
+    // return the fresh token so the requesting client stays signed in.
+    const hashed = await bcrypt_1.default.hash(newPassword, 10);
+    const token = crypto_1.default.randomUUID();
+    await db_1.prisma.user.update({
+        where: { id: user.id },
+        data: {
+            password: hashed,
+            authToken: token,
+            authTokenExpiry: new Date(Date.now() + AUTH_TOKEN_TTL_MS),
+        },
+    });
+    return res.json({ message: "Password changed successfully", token });
+});
 exports.authRouter.post("/verify-email", async (req, res) => {
     const { token } = req.body || {};
     if (!token) {

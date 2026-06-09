@@ -47,6 +47,7 @@ PayPal webhooks (`POST /webhooks/paypal`) are also mounted under `/webhooks` but
 ### `/auth`
 - `POST /auth/login` → sets new UUID `authToken`, returns `{ token, user }`.
 - `POST /auth/reset-password` → validates one-time reset token, hashes new password.
+- `POST /auth/change-password` → requires `Bearer` auth (validated inline, like `/resend-verification`). Body `{ currentPassword, newPassword }`. Verifies `currentPassword` with bcrypt, then hashes `newPassword` and **rotates `authToken`** (invalidates other sessions), returning `{ message, token }` so the calling client stays signed in. `newPassword` min length 6. Under `authLimiter`.
 
 ### `/users`
 Public: `POST /users/register`.

@@ -115,6 +115,75 @@ describe("POST /auth/forgot-password", () => {
   });
 });
 
+describe("POST /auth/change-password", () => {
+  it("returns 401 when no Authorization header", async () => {
+    const res = await request(app)
+      .post("/auth/change-password")
+      .send({ currentPassword: "a", newPassword: "newpass123" });
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 401 when token is invalid", async () => {
+    (db.user.findUnique as jest.Mock).mockResolvedValue(null);
+    const res = await request(app)
+      .post("/auth/change-password")
+      .set("Authorization", "Bearer bad-token")
+      .send({ currentPassword: "a", newPassword: "newpass123" });
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 400 when current or new password is missing", async () => {
+    (db.user.findUnique as jest.Mock).mockResolvedValue(mockUser);
+    const res = await request(app)
+      .post("/auth/change-password")
+      .set("Authorization", "Bearer student-token")
+      .send({ currentPassword: "a" });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 when new password is too short", async () => {
+    (db.user.findUnique as jest.Mock).mockResolvedValue(mockUser);
+    const res = await request(app)
+      .post("/auth/change-password")
+      .set("Authorization", "Bearer student-token")
+      .send({ currentPassword: "correct", newPassword: "short" });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 401 when current password is incorrect", async () => {
+    const hashed = await bcrypt.hash("correct", 10);
+    (db.user.findUnique as jest.Mock).mockResolvedValue({ ...mockUser, password: hashed });
+    const res = await request(app)
+      .post("/auth/change-password")
+      .set("Authorization", "Bearer student-token")
+      .send({ currentPassword: "wrongpassword", newPassword: "newpass123" });
+    expect(res.status).toBe(401);
+    expect(res.body.error).toMatch(/incorrect/i);
+  });
+
+  it("returns 200, rotates the token, and updates the password", async () => {
+    const hashed = await bcrypt.hash("correct", 10);
+    (db.user.findUnique as jest.Mock).mockResolvedValue({ ...mockUser, password: hashed });
+    (db.user.update as jest.Mock).mockResolvedValue(mockUser);
+
+    const res = await request(app)
+      .post("/auth/change-password")
+      .set("Authorization", "Bearer student-token")
+      .send({ currentPassword: "correct", newPassword: "newpass123" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("token");
+    expect(db.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          password: expect.any(String),
+          authToken: expect.any(String),
+        }),
+      })
+    );
+  });
+});
+
 describe("POST /auth/verify-email", () => {
   it("returns 400 when token is missing", async () => {
     const res = await request(app).post("/auth/verify-email").send({});
