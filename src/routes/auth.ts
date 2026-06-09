@@ -9,6 +9,15 @@ import {
 
 export const authRouter = Router();
 
+// Auth tokens are server-side session tokens; expire them so a leaked token
+// is not valid forever.
+const AUTH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+// A precomputed bcrypt hash used to spend the same ~time comparing a password
+// when the email doesn't exist as when it does. Prevents email enumeration via
+// login response timing. The plaintext is irrelevant — it never matches.
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync("invalid-credentials-placeholder", 10);
+
 authRouter.post("/login", async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) {
@@ -16,19 +25,21 @@ authRouter.post("/login", async (req, res) => {
   }
 
   const user = await prisma.user.findUnique({ where: { email } });
-  if (!user) {
-    return res.status(401).json({ error: "Invalid email or password" });
-  }
 
-  const ok = await bcrypt.compare(password, user.password);
-  if (!ok) {
+  // Always run a bcrypt comparison, even for a missing user, so the response
+  // time does not reveal whether the email is registered.
+  const ok = await bcrypt.compare(password, user?.password ?? DUMMY_PASSWORD_HASH);
+  if (!user || !ok) {
     return res.status(401).json({ error: "Invalid email or password" });
   }
 
   const token = crypto.randomUUID();
   const updated = await prisma.user.update({
     where: { id: user.id },
-    data: { authToken: token },
+    data: {
+      authToken: token,
+      authTokenExpiry: new Date(Date.now() + AUTH_TOKEN_TTL_MS),
+    },
   });
 
   const { password: _pw, ...safeUser } = updated as any;
@@ -40,6 +51,12 @@ authRouter.post("/reset-password", async (req, res) => {
   const { token, newPassword } = req.body || {};
   if (!token || !newPassword) {
     return res.status(400).json({ error: "Token and new password are required" });
+  }
+
+  if (typeof newPassword !== "string" || newPassword.length < 6) {
+    return res
+      .status(400)
+      .json({ error: "Password must be at least 6 characters" });
   }
 
   const user = await prisma.user.findFirst({ where: { passwordResetToken: token } });
@@ -117,7 +134,9 @@ authRouter.post("/resend-verification", async (req, res) => {
 
   const token = authHeader.slice(7);
   const user = await prisma.user.findUnique({ where: { authToken: token } });
-  if (!user) {
+  const expired =
+    user?.authTokenExpiry != null && user.authTokenExpiry < new Date();
+  if (!user || expired) {
     return res.status(401).json({ error: "Authentication required" });
   }
 

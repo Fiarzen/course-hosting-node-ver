@@ -9,7 +9,8 @@ async function authMiddleware(req, _res, next) {
         if (token) {
             try {
                 const user = await db_1.prisma.user.findUnique({ where: { authToken: token } });
-                if (user) {
+                const expired = user?.authTokenExpiry != null && user.authTokenExpiry < new Date();
+                if (user && !expired) {
                     req.user = { id: user.id, email: user.email, role: user.role };
                 }
             }

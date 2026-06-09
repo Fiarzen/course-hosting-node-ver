@@ -10,23 +10,32 @@ const crypto_1 = __importDefault(require("crypto"));
 const db_1 = require("../db");
 const email_1 = require("../services/email");
 exports.authRouter = (0, express_1.Router)();
+// Auth tokens are server-side session tokens; expire them so a leaked token
+// is not valid forever.
+const AUTH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+// A precomputed bcrypt hash used to spend the same ~time comparing a password
+// when the email doesn't exist as when it does. Prevents email enumeration via
+// login response timing. The plaintext is irrelevant — it never matches.
+const DUMMY_PASSWORD_HASH = bcrypt_1.default.hashSync("invalid-credentials-placeholder", 10);
 exports.authRouter.post("/login", async (req, res) => {
     const { email, password } = req.body || {};
     if (!email || !password) {
         return res.status(400).json({ error: "Email and password are required" });
     }
     const user = await db_1.prisma.user.findUnique({ where: { email } });
-    if (!user) {
-        return res.status(401).json({ error: "Invalid email or password" });
-    }
-    const ok = await bcrypt_1.default.compare(password, user.password);
-    if (!ok) {
+    // Always run a bcrypt comparison, even for a missing user, so the response
+    // time does not reveal whether the email is registered.
+    const ok = await bcrypt_1.default.compare(password, user?.password ?? DUMMY_PASSWORD_HASH);
+    if (!user || !ok) {
         return res.status(401).json({ error: "Invalid email or password" });
     }
     const token = crypto_1.default.randomUUID();
     const updated = await db_1.prisma.user.update({
         where: { id: user.id },
-        data: { authToken: token },
+        data: {
+            authToken: token,
+            authTokenExpiry: new Date(Date.now() + AUTH_TOKEN_TTL_MS),
+        },
     });
     const { password: _pw, ...safeUser } = updated;
     return res.json({ token, user: safeUser });
@@ -35,6 +44,11 @@ exports.authRouter.post("/reset-password", async (req, res) => {
     const { token, newPassword } = req.body || {};
     if (!token || !newPassword) {
         return res.status(400).json({ error: "Token and new password are required" });
+    }
+    if (typeof newPassword !== "string" || newPassword.length < 6) {
+        return res
+            .status(400)
+            .json({ error: "Password must be at least 6 characters" });
     }
     const user = await db_1.prisma.user.findFirst({ where: { passwordResetToken: token } });
     if (!user || !user.passwordResetTokenExpiry || user.passwordResetTokenExpiry < new Date()) {
@@ -98,7 +112,8 @@ exports.authRouter.post("/resend-verification", async (req, res) => {
     }
     const token = authHeader.slice(7);
     const user = await db_1.prisma.user.findUnique({ where: { authToken: token } });
-    if (!user) {
+    const expired = user?.authTokenExpiry != null && user.authTokenExpiry < new Date();
+    if (!user || expired) {
         return res.status(401).json({ error: "Authentication required" });
     }
     if (user.emailVerified) {
