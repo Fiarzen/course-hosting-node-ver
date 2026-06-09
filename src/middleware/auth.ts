@@ -21,7 +21,9 @@ export async function authMiddleware(
     if (token) {
       try {
         const user = await prisma.user.findUnique({ where: { authToken: token } });
-        if (user) {
+        const expired =
+          user?.authTokenExpiry != null && user.authTokenExpiry < new Date();
+        if (user && !expired) {
           req.user = { id: user.id, email: user.email, role: user.role };
         }
       } catch (err) {

@@ -8,14 +8,20 @@ const express_1 = require("express");
 const bcrypt_1 = __importDefault(require("bcrypt"));
 const crypto_1 = __importDefault(require("crypto"));
 const db_1 = require("../db");
+const rateLimit_1 = require("../middleware/rateLimit");
 const email_1 = require("../services/email");
 const publicRouter = (0, express_1.Router)();
 const protectedRouter = (0, express_1.Router)();
 // POST /users/register
-publicRouter.post("/register", async (req, res) => {
+publicRouter.post("/register", rateLimit_1.authLimiter, async (req, res) => {
     const { name, email, password } = req.body || {};
     if (!email || !password) {
         return res.status(400).json({ error: "Email and password are required" });
+    }
+    if (typeof password !== "string" || password.length < 6) {
+        return res
+            .status(400)
+            .json({ error: "Password must be at least 6 characters" });
     }
     const existing = await db_1.prisma.user.findUnique({ where: { email } });
     if (existing) {

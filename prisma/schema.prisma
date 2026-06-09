@@ -21,6 +21,7 @@ model User {
   password                  String
   role                      String    @default("STUDENT")
   authToken                 String?   @unique
+  authTokenExpiry           DateTime?
   passwordResetToken           String?
   passwordResetTokenExpiry     DateTime?
   emailVerified                Boolean   @default(false)

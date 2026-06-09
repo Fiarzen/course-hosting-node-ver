@@ -3,6 +3,7 @@ import bcrypt from "bcrypt";
 import crypto from "crypto";
 import { prisma } from "../db";
 import { AuthenticatedRequest } from "../middleware/auth";
+import { authLimiter } from "../middleware/rateLimit";
 import {
   sendVerificationEmail,
   sendAdminPasswordResetEmail,
@@ -12,11 +13,17 @@ const publicRouter = Router();
 const protectedRouter = Router();
 
 // POST /users/register
-publicRouter.post("/register", async (req, res) => {
+publicRouter.post("/register", authLimiter, async (req, res) => {
   const { name, email, password } = req.body || {};
 
   if (!email || !password) {
     return res.status(400).json({ error: "Email and password are required" });
+  }
+
+  if (typeof password !== "string" || password.length < 6) {
+    return res
+      .status(400)
+      .json({ error: "Password must be at least 6 characters" });
   }
 
   const existing = await prisma.user.findUnique({ where: { email } });

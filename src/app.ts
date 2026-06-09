@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
 import path from "path";
 import dotenv from "dotenv";
 
@@ -12,10 +13,20 @@ import { enrollmentsRouter } from "./routes/enrollments";
 import { paymentsRouter } from "./routes/payments";
 import { webhooksRouter } from "./routes/webhooks";
 import { authMiddleware } from "./middleware/auth";
+import { authLimiter, globalLimiter } from "./middleware/rateLimit";
 
 dotenv.config();
 
 const app = express();
+
+// Railway terminates TLS at a single proxy hop in front of the app. Trust
+// exactly one hop so express-rate-limit reads the real client IP from
+// X-Forwarded-For. Do NOT use `true` here — that would let clients spoof
+// X-Forwarded-For and bypass the rate limiter.
+app.set("trust proxy", 1);
+
+// Security response headers (HSTS, nosniff, frame options, etc.).
+app.use(helmet());
 
 const allowedOrigins = (
   process.env.CORS_ALLOWED_ORIGINS ||
@@ -43,10 +54,14 @@ app.use("/webhooks", express.raw({ type: "application/json" }), webhooksRouter);
 
 app.use(express.json());
 
+// Coarse global abuse backstop. Mounted after the raw-body webhook route so
+// Stripe/PayPal webhook traffic is not throttled.
+app.use(globalLimiter);
+
 const uploadsDir = path.join(process.cwd(), "uploads");
 app.use("/files", express.static(uploadsDir));
 
-app.use("/auth", authRouter);
+app.use("/auth", authLimiter, authRouter);
 app.use("/users", usersRouter.publicRouter);
 app.use("/courses", coursesRouter.publicRouter);
 app.use("/files", (_req, _res, next) => next());

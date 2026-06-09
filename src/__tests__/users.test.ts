@@ -30,9 +30,15 @@ describe("POST /users/register", () => {
     expect(res.status).toBe(400);
   });
 
+  it("returns 400 when password is shorter than 6 characters", async () => {
+    const res = await request(app).post("/users/register").send({ email: "a@b.com", password: "pass" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/at least 6/i);
+  });
+
   it("returns 409 when email already registered", async () => {
     (db.user.findUnique as jest.Mock).mockResolvedValue(mockUser);
-    const res = await request(app).post("/users/register").send({ email: mockUser.email, password: "pass" });
+    const res = await request(app).post("/users/register").send({ email: mockUser.email, password: "pass123" });
     expect(res.status).toBe(409);
   });
 
