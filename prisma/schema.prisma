@@ -39,6 +39,7 @@ model Course {
   title                 String
   description           String
   restrictedToAllowList Boolean   @default(false)
+  featured              Boolean   @default(false)
   isPaid                Boolean   @default(false)
   priceCents            Int?
   currency              String?

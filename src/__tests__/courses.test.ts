@@ -137,6 +137,51 @@ describe("DELETE /courses/:courseId", () => {
   });
 });
 
+describe("PUT /courses/:courseId/featured", () => {
+  it("returns 401 when not authenticated", async () => {
+    const res = await request(app)
+      .put(`/courses/${mockCourse.id}/featured`)
+      .send({ featured: true });
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 403 when caller is not admin (even the course author)", async () => {
+    setupAuthMock({ "creator-token": mockCreator });
+    (db.course.findUnique as jest.Mock).mockResolvedValue(mockCourse);
+
+    const res = await request(app)
+      .put(`/courses/${mockCourse.id}/featured`)
+      .set("Authorization", "Bearer creator-token")
+      .send({ featured: true });
+    expect(res.status).toBe(403);
+  });
+
+  it("returns 422 when featured is not a boolean", async () => {
+    setupAuthMock({ "admin-token": mockAdmin });
+    (db.course.findUnique as jest.Mock).mockResolvedValue(mockCourse);
+
+    const res = await request(app)
+      .put(`/courses/${mockCourse.id}/featured`)
+      .set("Authorization", "Bearer admin-token")
+      .send({ featured: "yes" });
+    expect(res.status).toBe(422);
+  });
+
+  it("lets an admin feature a course", async () => {
+    setupAuthMock({ "admin-token": mockAdmin });
+    (db.course.findUnique as jest.Mock).mockResolvedValue(mockCourse);
+    (db.course.update as jest.Mock).mockResolvedValue({ ...mockCourse, featured: true });
+
+    const res = await request(app)
+      .put(`/courses/${mockCourse.id}/featured`)
+      .set("Authorization", "Bearer admin-token")
+      .send({ featured: true });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ courseId: mockCourse.id, featured: true });
+  });
+});
+
 describe("PUT /courses/:courseId/pricing", () => {
   it("returns 403 when caller is not author or admin", async () => {
     setupAuthMock({ "student-token": mockUser });

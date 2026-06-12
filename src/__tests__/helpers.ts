@@ -41,6 +41,7 @@ export const mockCourse = {
   priceCents: null,
   currency: null,
   restrictedToAllowList: false,
+  featured: false,
   allowedEmails: [],
   author: { id: mockCreator.id, name: mockCreator.name, email: mockCreator.email },
   createdAt: new Date("2025-01-01"),

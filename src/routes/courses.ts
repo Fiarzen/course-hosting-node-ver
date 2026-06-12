@@ -215,4 +215,28 @@ protectedRouter.put("/:courseId/pricing", async (req: AuthenticatedRequest, res)
   });
 });
 
+// PUT /courses/:courseId/featured (admin only — controls the public homepage)
+protectedRouter.put("/:courseId/featured", async (req: AuthenticatedRequest, res) => {
+  if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+  if (req.user.role !== "ADMIN") {
+    return res.status(403).json({ error: "Only admins can feature courses" });
+  }
+
+  const id = Number(req.params.courseId);
+  const course = await prisma.course.findUnique({ where: { id } });
+  if (!course) return res.status(404).json({ error: "Course not found" });
+
+  const { featured } = req.body || {};
+  if (typeof featured !== "boolean") {
+    return res.status(422).json({ error: "featured must be a boolean" });
+  }
+
+  const updated = await prisma.course.update({
+    where: { id },
+    data: { featured },
+  });
+
+  res.json({ courseId: updated.id, featured: updated.featured });
+});
+
 export const coursesRouter = { publicRouter, protectedRouter };
