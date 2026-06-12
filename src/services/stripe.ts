@@ -53,9 +53,23 @@ export async function createCheckoutSession(params: CheckoutSessionParams) {
       courseId: String(params.courseId),
       userId: String(params.userId),
     },
+    // Also stamp the payment intent itself: payment_intent.payment_failed
+    // events carry only the intent, and we don't learn the intent id until
+    // checkout.session.completed — this metadata is the only way to map a
+    // failed payment back to its purchase.
+    payment_intent_data: {
+      metadata: {
+        courseId: String(params.courseId),
+        userId: String(params.userId),
+      },
+    },
     success_url: successUrl,
     cancel_url: cancelUrl,
   });
+}
+
+export async function getCheckoutSession(sessionId: string) {
+  return stripe().checkout.sessions.retrieve(sessionId);
 }
 
 export function constructWebhookEvent(

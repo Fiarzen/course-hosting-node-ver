@@ -10,7 +10,20 @@ import {
 } from "./courseAccess";
 export const lessonsRouter = Router();
 
-// GET /lessons
+// Replace stored pdfUrl keys with signed URLs, in parallel.
+async function signLessonPdfs<T extends { pdfUrl: string | null }>(
+  lessons: T[],
+): Promise<T[]> {
+  await Promise.all(
+    lessons.map(async (lesson) => {
+      if (lesson.pdfUrl) {
+        lesson.pdfUrl = (await getSignedPdfUrl(lesson.pdfUrl)) || lesson.pdfUrl;
+      }
+    }),
+  );
+  return lessons;
+}
+
 // GET /lessons
 lessonsRouter.get("/", async (req: AuthenticatedRequest, res) => {
   const user = req.user || null;
@@ -18,38 +31,28 @@ lessonsRouter.get("/", async (req: AuthenticatedRequest, res) => {
 
   if (isAdmin(user)) {
     const all = await prisma.lesson.findMany();
-
-    // Generate signed URLs for PDFs
-    for (let lesson of all) {
-      if (lesson.pdfUrl) {
-        lesson.pdfUrl = (await getSignedPdfUrl(lesson.pdfUrl)) || lesson.pdfUrl;
-      }
-    }
-
-    return res.json(all);
+    return res.json(await signLessonPdfs(all));
   }
 
-  const enrollments = await prisma.courseEnrollment.findMany({
-    where: { userId: user.id },
-  });
-  const authoredCourses = await prisma.course.findMany({
-    where: { authorId: user.id },
-  });
+  const [enrollments, authoredCourses] = await Promise.all([
+    prisma.courseEnrollment.findMany({
+      where: { userId: user.id },
+      select: { courseId: true },
+    }),
+    prisma.course.findMany({
+      where: { authorId: user.id },
+      select: { id: true },
+    }),
+  ]);
   const accessibleCourseIds = new Set<number>();
   enrollments.forEach((e) => accessibleCourseIds.add(e.courseId));
   authoredCourses.forEach((c) => accessibleCourseIds.add(c.id));
 
-  const lessons = await prisma.lesson.findMany({});
-  const filtered = lessons.filter((l) => accessibleCourseIds.has(l.courseId));
+  const lessons = await prisma.lesson.findMany({
+    where: { courseId: { in: [...accessibleCourseIds] } },
+  });
 
-  // Generate signed URLs for PDFs
-  for (let lesson of filtered) {
-    if (lesson.pdfUrl) {
-      lesson.pdfUrl = (await getSignedPdfUrl(lesson.pdfUrl)) || lesson.pdfUrl;
-    }
-  }
-
-  return res.json(filtered);
+  return res.json(await signLessonPdfs(lessons));
 });
 
 // GET /lessons/course/:courseId
@@ -79,14 +82,7 @@ lessonsRouter.get(
       return res.json(summaries);
     }
 
-    // Generate signed URLs for PDFs
-    for (let lesson of orderedLessons) {
-      if (lesson.pdfUrl) {
-        lesson.pdfUrl = (await getSignedPdfUrl(lesson.pdfUrl)) || lesson.pdfUrl;
-      }
-    }
-
-    return res.json(orderedLessons);
+    return res.json(await signLessonPdfs(orderedLessons));
   },
 );
 
@@ -286,13 +282,6 @@ lessonsRouter.post(
       orderBy: [{ orderIndex: "asc" }, { id: "asc" }],
     });
 
-    // Generate signed URLs for PDFs
-    for (let lesson of updated) {
-      if (lesson.pdfUrl) {
-        lesson.pdfUrl = (await getSignedPdfUrl(lesson.pdfUrl)) || lesson.pdfUrl;
-      }
-    }
-
-    return res.json(updated);
+    return res.json(await signLessonPdfs(updated));
   },
 );

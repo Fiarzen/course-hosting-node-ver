@@ -70,16 +70,32 @@ exports.enrollmentsRouter.get("/my-courses", async (req, res) => {
         where: { userId: dbUser.id },
         include: { course: true },
     });
-    const result = await Promise.all(enrollments.map(async (enrollment) => {
-        const lessons = await db_1.prisma.lesson.findMany({ where: { courseId: enrollment.courseId } });
-        const totalLessons = lessons.length;
-        const completedLessons = await db_1.prisma.lessonProgress.count({
+    const courseIds = enrollments.map((e) => e.courseId);
+    // Two aggregate queries instead of two queries per enrolled course.
+    const [lessonCounts, completedRows] = await Promise.all([
+        db_1.prisma.lesson.groupBy({
+            by: ["courseId"],
+            where: { courseId: { in: courseIds } },
+            _count: { id: true },
+        }),
+        db_1.prisma.lessonProgress.findMany({
             where: {
                 userId: dbUser.id,
-                lesson: { courseId: enrollment.courseId },
                 completed: true,
+                lesson: { courseId: { in: courseIds } },
             },
-        });
+            select: { lesson: { select: { courseId: true } } },
+        }),
+    ]);
+    const totalByCourse = new Map(lessonCounts.map((c) => [c.courseId, c._count.id]));
+    const completedByCourse = new Map();
+    for (const row of completedRows) {
+        const cid = row.lesson.courseId;
+        completedByCourse.set(cid, (completedByCourse.get(cid) ?? 0) + 1);
+    }
+    const result = enrollments.map((enrollment) => {
+        const totalLessons = totalByCourse.get(enrollment.courseId) ?? 0;
+        const completedLessons = completedByCourse.get(enrollment.courseId) ?? 0;
         return {
             course: enrollment.course,
             enrolledAt: enrollment.enrolledAt.toISOString(),
@@ -87,7 +103,7 @@ exports.enrollmentsRouter.get("/my-courses", async (req, res) => {
             completedLessons,
             progress: totalLessons > 0 ? (completedLessons * 100.0) / totalLessons : 0.0,
         };
-    }));
+    });
     return res.json(result);
 });
 // DELETE /enrollments/courses/:courseId
@@ -175,21 +191,19 @@ exports.enrollmentsRouter.get("/courses/:courseId/progress", async (req, res) =>
         return res.status(403).json({ error: "You are not enrolled in this course" });
     }
     const lessons = await db_1.prisma.lesson.findMany({ where: { courseId } });
-    const lessonProgress = await Promise.all(lessons.map(async (lesson) => {
-        const progress = await db_1.prisma.lessonProgress.findUnique({
-            where: {
-                userId_lessonId: {
-                    userId: dbUser.id,
-                    lessonId: lesson.id,
-                },
-            },
-        });
+    // One progress query for the whole course instead of one per lesson.
+    const progressRows = await db_1.prisma.lessonProgress.findMany({
+        where: { userId: dbUser.id, lessonId: { in: lessons.map((l) => l.id) } },
+    });
+    const progressByLesson = new Map(progressRows.map((p) => [p.lessonId, p]));
+    const lessonProgress = lessons.map((lesson) => {
+        const progress = progressByLesson.get(lesson.id);
         return {
             lesson,
             completed: progress?.completed ?? false,
             completedAt: progress?.completedAt?.toISOString() ?? null,
         };
-    }));
+    });
     const completedCount = lessonProgress.filter((p) => p.completed).length;
     const progressPercent = lessons.length > 0 ? (completedCount * 100.0) / lessons.length : 0.0;
     return res.json({

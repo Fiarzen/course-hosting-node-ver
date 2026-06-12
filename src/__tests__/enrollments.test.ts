@@ -92,8 +92,12 @@ describe("GET /enrollments/my-courses", () => {
     (db.courseEnrollment.findMany as jest.Mock).mockResolvedValue([
       { id: 1, userId: mockUser.id, courseId: mockCourse.id, enrolledAt: new Date(), course: mockCourse },
     ]);
-    (db.lesson.findMany as jest.Mock).mockResolvedValue([{ id: 1 }, { id: 2 }]);
-    (db.lessonProgress.count as jest.Mock).mockResolvedValue(1);
+    (db.lesson.groupBy as jest.Mock).mockResolvedValue([
+      { courseId: mockCourse.id, _count: { id: 2 } },
+    ]);
+    (db.lessonProgress.findMany as jest.Mock).mockResolvedValue([
+      { lesson: { courseId: mockCourse.id } },
+    ]);
 
     const res = await request(app).get("/enrollments/my-courses").set("Authorization", `Bearer ${studentToken}`);
 

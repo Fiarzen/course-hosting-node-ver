@@ -20,10 +20,18 @@ function canSeeCourse(user, course) {
 // GET /courses (public listing with allowlist logic)
 publicRouter.get("/", async (req, res) => {
     const user = req.user || null;
+    // allowedEmails is needed for the visibility check but must never reach the
+    // client, and author must be a safe subset — the full User row carries the
+    // password hash and live auth/reset tokens.
     const courses = await db_1.prisma.course.findMany({
-        include: { allowedEmails: true, author: true },
+        include: {
+            allowedEmails: { select: { email: true } },
+            author: { select: { id: true, name: true } },
+        },
     });
-    const visible = courses.filter((c) => canSeeCourse(user, c));
+    const visible = courses
+        .filter((c) => canSeeCourse(user, c))
+        .map(({ allowedEmails, ...course }) => course);
     res.json(visible);
 });
 // POST /courses (creator/admin)
@@ -42,11 +50,15 @@ protectedRouter.post("/", async (req, res) => {
             return res.status(422).json({ error: "currency is required when isPaid is true", code: "COURSE_NOT_PURCHASABLE" });
         }
     }
+    // Only admins may attribute a course to another user.
+    const resolvedAuthorId = req.user.role === "ADMIN" && Number.isInteger(authorId)
+        ? authorId
+        : req.user.id;
     const course = await db_1.prisma.course.create({
         data: {
             title,
             description,
-            authorId: authorId ?? req.user.id,
+            authorId: resolvedAuthorId,
             isPaid: isPaid === true,
             priceCents: isPaid === true ? priceCents : null,
             currency: isPaid === true ? currency.toLowerCase() : null,
@@ -147,6 +159,7 @@ protectedRouter.delete("/:courseId", async (req, res) => {
         }
         await tx.courseEnrollment.deleteMany({ where: { courseId: id } });
         await tx.courseAllowedEmail.deleteMany({ where: { courseId: id } });
+        await tx.coursePurchase.deleteMany({ where: { courseId: id } });
         await tx.course.delete({ where: { id } });
     });
     res.json({ message: "Course deleted" });
@@ -190,5 +203,26 @@ protectedRouter.put("/:courseId/pricing", async (req, res) => {
         priceCents: updated.priceCents ?? null,
         currency: updated.currency ?? null,
     });
+});
+// PUT /courses/:courseId/featured (admin only — controls the public homepage)
+protectedRouter.put("/:courseId/featured", async (req, res) => {
+    if (!req.user)
+        return res.status(401).json({ error: "Not authenticated" });
+    if (req.user.role !== "ADMIN") {
+        return res.status(403).json({ error: "Only admins can feature courses" });
+    }
+    const id = Number(req.params.courseId);
+    const course = await db_1.prisma.course.findUnique({ where: { id } });
+    if (!course)
+        return res.status(404).json({ error: "Course not found" });
+    const { featured } = req.body || {};
+    if (typeof featured !== "boolean") {
+        return res.status(422).json({ error: "featured must be a boolean" });
+    }
+    const updated = await db_1.prisma.course.update({
+        where: { id },
+        data: { featured },
+    });
+    res.json({ courseId: updated.id, featured: updated.featured });
 });
 exports.coursesRouter = { publicRouter, protectedRouter };

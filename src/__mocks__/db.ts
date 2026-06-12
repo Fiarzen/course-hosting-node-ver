@@ -29,10 +29,12 @@ export const prisma = {
   lesson: {
     findUnique: jest.fn(),
     findMany: jest.fn(),
+    groupBy: jest.fn(),
     deleteMany: jest.fn(),
   },
   lessonProgress: {
     findUnique: jest.fn(),
+    findMany: jest.fn(),
     count: jest.fn(),
     deleteMany: jest.fn(),
     upsert: jest.fn(),

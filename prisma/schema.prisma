@@ -32,6 +32,9 @@ model User {
   enrollments               CourseEnrollment[]
   lessonProgress            LessonProgress[]
   purchases                 CoursePurchase[]
+
+  @@index([passwordResetToken])
+  @@index([emailVerificationToken])
 }
 
 model Course {
@@ -113,6 +116,8 @@ model Lesson {
   course     Course   @relation(fields: [courseId], references: [id])
 
   progress   LessonProgress[]
+
+  @@index([courseId])
 }
 
 model CourseEnrollment {
@@ -140,6 +145,7 @@ model LessonProgress {
   lesson      Lesson   @relation(fields: [lessonId], references: [id])
 
   @@unique([userId, lessonId])
+  @@index([lessonId])
 }
 
 model Assessment {

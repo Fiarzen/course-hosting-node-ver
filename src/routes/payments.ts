@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { prisma } from "../db";
 import { AuthenticatedRequest } from "../middleware/auth";
-import { createCheckoutSession } from "../services/stripe";
+import { createCheckoutSession, getCheckoutSession } from "../services/stripe";
 import { createPaypalOrder, capturePaypalOrder } from "../services/paypal";
 
 export const paymentsRouter = Router();
@@ -56,16 +56,29 @@ paymentsRouter.post("/courses/:courseId/checkout-session", async (req: Authentic
       OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
     },
   });
-  if (existingPurchase) {
-    return res.status(200).json({
-      purchaseId: existingPurchase.id,
-      courseId,
-      status: existingPurchase.status,
-      checkoutSessionId: existingPurchase.checkoutSessionId,
-      checkoutUrl: `https://checkout.stripe.com/pay/${existingPurchase.checkoutSessionId}`,
-      expiresAt: existingPurchase.expiresAt?.toISOString() ?? null,
-      reused: true,
-    });
+  if (existingPurchase?.checkoutSessionId) {
+    // Use the session's real URL — the checkout.stripe.com URL format is not
+    // something we can construct ourselves. If the session is no longer open
+    // (expired/completed), fall through and create a fresh one.
+    try {
+      const existingSession = await getCheckoutSession(existingPurchase.checkoutSessionId);
+      if (existingSession.status === "open" && existingSession.url) {
+        return res.status(200).json({
+          purchaseId: existingPurchase.id,
+          courseId,
+          status: existingPurchase.status,
+          checkoutSessionId: existingPurchase.checkoutSessionId,
+          checkoutUrl: existingSession.url,
+          expiresAt: existingPurchase.expiresAt?.toISOString() ?? null,
+          reused: true,
+        });
+      }
+    } catch (err) {
+      console.warn(
+        `Could not retrieve checkout session ${existingPurchase.checkoutSessionId}, creating a new one:`,
+        err,
+      );
+    }
   }
 
   // Create new Stripe Checkout Session
@@ -85,17 +98,23 @@ paymentsRouter.post("/courses/:courseId/checkout-session", async (req: Authentic
 
   const expiresAt = session.expires_at ? new Date(session.expires_at * 1000) : null;
 
-  const purchase = await prisma.coursePurchase.create({
-    data: {
-      userId: dbUser.id,
-      courseId,
-      checkoutSessionId: session.id,
-      amountCents: course.priceCents,
-      currency: course.currency,
-      status: "PENDING",
-      expiresAt,
-    },
-  });
+  // Re-point the stale PENDING purchase at the new session instead of
+  // accumulating a duplicate row per retry.
+  const purchaseData = {
+    checkoutSessionId: session.id,
+    amountCents: course.priceCents,
+    currency: course.currency,
+    status: "PENDING" as const,
+    expiresAt,
+  };
+  const purchase = existingPurchase
+    ? await prisma.coursePurchase.update({
+        where: { id: existingPurchase.id },
+        data: purchaseData,
+      })
+    : await prisma.coursePurchase.create({
+        data: { userId: dbUser.id, courseId, ...purchaseData },
+      });
 
   console.log(`Created purchase ${purchase.id} with checkout session ${session.id} for user ${dbUser.id} course ${courseId}`);
 
@@ -281,6 +300,19 @@ paymentsRouter.post("/paypal/capture", async (req: AuthenticatedRequest, res) =>
 
   if (captureResult.status !== "COMPLETED") {
     return res.status(402).json({ error: `PayPal capture status: ${captureResult.status}`, code: "PAYMENT_REQUIRED" });
+  }
+
+  // Never enroll on a capture whose amount/currency doesn't match the purchase.
+  const amountMismatch =
+    captureResult.amountCents != null && captureResult.amountCents !== purchase.amountCents;
+  const currencyMismatch =
+    captureResult.currency != null &&
+    captureResult.currency !== purchase.currency.toLowerCase();
+  if (amountMismatch || currencyMismatch) {
+    console.error(
+      `PayPal capture mismatch for purchase ${purchase.id}: captured ${captureResult.amountCents} ${captureResult.currency}, expected ${purchase.amountCents} ${purchase.currency}`
+    );
+    return res.status(409).json({ error: "Captured amount does not match purchase", code: "PAYMENT_REQUIRED" });
   }
 
   await prisma.$transaction(async (tx) => {

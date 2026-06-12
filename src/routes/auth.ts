@@ -6,6 +6,8 @@ import {
   sendPasswordResetEmail,
   sendVerificationEmail,
 } from "../services/email";
+import { toSafeUser } from "../utils/safeUser";
+import { hashAuthToken, findUserByAuthToken } from "../utils/authToken";
 
 export const authRouter = Router();
 
@@ -37,14 +39,12 @@ authRouter.post("/login", async (req, res) => {
   const updated = await prisma.user.update({
     where: { id: user.id },
     data: {
-      authToken: token,
+      authToken: hashAuthToken(token),
       authTokenExpiry: new Date(Date.now() + AUTH_TOKEN_TTL_MS),
     },
   });
 
-  const { password: _pw, ...safeUser } = updated as any;
-
-  return res.json({ token, user: safeUser });
+  return res.json({ token, user: toSafeUser(updated) });
 });
 
 authRouter.post("/reset-password", async (req, res) => {
@@ -72,6 +72,7 @@ authRouter.post("/reset-password", async (req, res) => {
       passwordResetToken: null,
       passwordResetTokenExpiry: null,
       authToken: null,
+      authTokenExpiry: null,
     },
   });
 
@@ -110,7 +111,7 @@ authRouter.post("/change-password", async (req, res) => {
   }
 
   const sessionToken = authHeader.slice(7);
-  const user = await prisma.user.findUnique({ where: { authToken: sessionToken } });
+  const user = await findUserByAuthToken(sessionToken);
   const expired =
     user?.authTokenExpiry != null && user.authTokenExpiry < new Date();
   if (!user || expired) {
@@ -143,7 +144,7 @@ authRouter.post("/change-password", async (req, res) => {
     where: { id: user.id },
     data: {
       password: hashed,
-      authToken: token,
+      authToken: hashAuthToken(token),
       authTokenExpiry: new Date(Date.now() + AUTH_TOKEN_TTL_MS),
     },
   });
@@ -181,7 +182,7 @@ authRouter.post("/resend-verification", async (req, res) => {
   }
 
   const token = authHeader.slice(7);
-  const user = await prisma.user.findUnique({ where: { authToken: token } });
+  const user = await findUserByAuthToken(token);
   const expired =
     user?.authTokenExpiry != null && user.authTokenExpiry < new Date();
   if (!user || expired) {

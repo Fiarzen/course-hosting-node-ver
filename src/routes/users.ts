@@ -3,6 +3,7 @@ import bcrypt from "bcrypt";
 import crypto from "crypto";
 import { prisma } from "../db";
 import { AuthenticatedRequest } from "../middleware/auth";
+import { toSafeUser } from "../utils/safeUser";
 import { authLimiter } from "../middleware/rateLimit";
 import {
   sendVerificationEmail,
@@ -46,8 +47,7 @@ publicRouter.post("/register", authLimiter, async (req, res) => {
 
   await sendVerificationEmail(email, verificationToken);
 
-  const { password: _pw, ...safeUser } = user as any;
-  return res.status(201).json(safeUser);
+  return res.status(201).json(toSafeUser(user));
 });
 
 // GET /users (admin only)
@@ -60,7 +60,7 @@ protectedRouter.get("/", async (req: AuthenticatedRequest, res) => {
   }
 
   const users = await prisma.user.findMany();
-  return res.json(users.map(({ password, ...rest }) => rest));
+  return res.json(users.map(toSafeUser));
 });
 
 // GET /users/me
@@ -72,8 +72,7 @@ protectedRouter.get("/me", async (req: AuthenticatedRequest, res) => {
     return res.status(404).json({ error: "User not found" });
   }
 
-  const { password, ...safeUser } = user as any;
-  return res.json(safeUser);
+  return res.json(toSafeUser(user));
 });
 
 // POST /users/:userId/upgrade-to-creator (admin only)
@@ -98,8 +97,7 @@ protectedRouter.post("/:userId/upgrade-to-creator", async (req: AuthenticatedReq
     data: { role: "CREATOR" },
   });
 
-  const { password, ...safeUser } = updated as any;
-  return res.json({ message: "User successfully upgraded to CREATOR", user: safeUser });
+  return res.json({ message: "User successfully upgraded to CREATOR", user: toSafeUser(updated) });
 });
 
 // POST /users/:userId/reset-password (admin creates token)

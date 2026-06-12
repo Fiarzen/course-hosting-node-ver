@@ -75,28 +75,43 @@ enrollmentsRouter.get("/my-courses", async (req: AuthenticatedRequest, res) => {
     where: { userId: dbUser.id },
     include: { course: true },
   });
+  const courseIds = enrollments.map((e) => e.courseId);
 
-  const result = await Promise.all(
-    enrollments.map(async (enrollment) => {
-      const lessons = await prisma.lesson.findMany({ where: { courseId: enrollment.courseId } });
-      const totalLessons = lessons.length;
-      const completedLessons = await prisma.lessonProgress.count({
-        where: {
-          userId: dbUser.id,
-          lesson: { courseId: enrollment.courseId },
-          completed: true,
-        },
-      });
+  // Two aggregate queries instead of two queries per enrolled course.
+  const [lessonCounts, completedRows] = await Promise.all([
+    prisma.lesson.groupBy({
+      by: ["courseId"],
+      where: { courseId: { in: courseIds } },
+      _count: { id: true },
+    }),
+    prisma.lessonProgress.findMany({
+      where: {
+        userId: dbUser.id,
+        completed: true,
+        lesson: { courseId: { in: courseIds } },
+      },
+      select: { lesson: { select: { courseId: true } } },
+    }),
+  ]);
 
-      return {
-        course: enrollment.course,
-        enrolledAt: enrollment.enrolledAt.toISOString(),
-        totalLessons,
-        completedLessons,
-        progress: totalLessons > 0 ? (completedLessons * 100.0) / totalLessons : 0.0,
-      };
-    })
-  );
+  const totalByCourse = new Map(lessonCounts.map((c) => [c.courseId, c._count.id]));
+  const completedByCourse = new Map<number, number>();
+  for (const row of completedRows) {
+    const cid = row.lesson.courseId;
+    completedByCourse.set(cid, (completedByCourse.get(cid) ?? 0) + 1);
+  }
+
+  const result = enrollments.map((enrollment) => {
+    const totalLessons = totalByCourse.get(enrollment.courseId) ?? 0;
+    const completedLessons = completedByCourse.get(enrollment.courseId) ?? 0;
+    return {
+      course: enrollment.course,
+      enrolledAt: enrollment.enrolledAt.toISOString(),
+      totalLessons,
+      completedLessons,
+      progress: totalLessons > 0 ? (completedLessons * 100.0) / totalLessons : 0.0,
+    };
+  });
 
   return res.json(result);
 });
@@ -194,24 +209,20 @@ enrollmentsRouter.get("/courses/:courseId/progress", async (req: AuthenticatedRe
   }
 
   const lessons = await prisma.lesson.findMany({ where: { courseId } });
-  const lessonProgress = await Promise.all(
-    lessons.map(async (lesson) => {
-      const progress = await prisma.lessonProgress.findUnique({
-        where: {
-          userId_lessonId: {
-            userId: dbUser.id,
-            lessonId: lesson.id,
-          },
-        },
-      });
+  // One progress query for the whole course instead of one per lesson.
+  const progressRows = await prisma.lessonProgress.findMany({
+    where: { userId: dbUser.id, lessonId: { in: lessons.map((l) => l.id) } },
+  });
+  const progressByLesson = new Map(progressRows.map((p) => [p.lessonId, p]));
 
-      return {
-        lesson,
-        completed: progress?.completed ?? false,
-        completedAt: progress?.completedAt?.toISOString() ?? null,
-      };
-    })
-  );
+  const lessonProgress = lessons.map((lesson) => {
+    const progress = progressByLesson.get(lesson.id);
+    return {
+      lesson,
+      completed: progress?.completed ?? false,
+      completedAt: progress?.completedAt?.toISOString() ?? null,
+    };
+  });
 
   const completedCount = lessonProgress.filter((p) => p.completed).length;
   const progressPercent = lessons.length > 0 ? (completedCount * 100.0) / lessons.length : 0.0;

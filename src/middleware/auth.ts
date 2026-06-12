@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import { prisma } from "../db";
+import { findUserByAuthToken } from "../utils/authToken";
 
 export interface AuthenticatedRequest extends Request {
   user?: {
@@ -20,7 +20,7 @@ export async function authMiddleware(
     const token = authHeader.substring(7);
     if (token) {
       try {
-        const user = await prisma.user.findUnique({ where: { authToken: token } });
+        const user = await findUserByAuthToken(token);
         const expired =
           user?.authTokenExpiry != null && user.authTokenExpiry < new Date();
         if (user && !expired) {

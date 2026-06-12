@@ -17,11 +17,19 @@ function canSeeCourse(user: any | null, course: any): boolean {
 // GET /courses (public listing with allowlist logic)
 publicRouter.get("/", async (req: AuthenticatedRequest, res) => {
   const user = req.user || null;
+  // allowedEmails is needed for the visibility check but must never reach the
+  // client, and author must be a safe subset — the full User row carries the
+  // password hash and live auth/reset tokens.
   const courses = await prisma.course.findMany({
-    include: { allowedEmails: true, author: true },
+    include: {
+      allowedEmails: { select: { email: true } },
+      author: { select: { id: true, name: true } },
+    },
   });
 
-  const visible = courses.filter((c) => canSeeCourse(user, c));
+  const visible = courses
+    .filter((c) => canSeeCourse(user, c))
+    .map(({ allowedEmails, ...course }) => course);
   res.json(visible);
 });
 
@@ -43,11 +51,17 @@ protectedRouter.post("/", async (req: AuthenticatedRequest, res) => {
     }
   }
 
+  // Only admins may attribute a course to another user.
+  const resolvedAuthorId =
+    req.user.role === "ADMIN" && Number.isInteger(authorId)
+      ? authorId
+      : req.user.id;
+
   const course = await prisma.course.create({
     data: {
       title,
       description,
-      authorId: authorId ?? req.user.id,
+      authorId: resolvedAuthorId,
       isPaid: isPaid === true,
       priceCents: isPaid === true ? priceCents : null,
       currency: isPaid === true ? currency.toLowerCase() : null,
@@ -164,6 +178,7 @@ protectedRouter.delete("/:courseId", async (req: AuthenticatedRequest, res) => {
 
     await tx.courseEnrollment.deleteMany({ where: { courseId: id } });
     await tx.courseAllowedEmail.deleteMany({ where: { courseId: id } });
+    await tx.coursePurchase.deleteMany({ where: { courseId: id } });
     await tx.course.delete({ where: { id } });
   });
 

@@ -9,6 +9,8 @@ const bcrypt_1 = __importDefault(require("bcrypt"));
 const crypto_1 = __importDefault(require("crypto"));
 const db_1 = require("../db");
 const email_1 = require("../services/email");
+const safeUser_1 = require("../utils/safeUser");
+const authToken_1 = require("../utils/authToken");
 exports.authRouter = (0, express_1.Router)();
 // Auth tokens are server-side session tokens; expire them so a leaked token
 // is not valid forever.
@@ -33,12 +35,11 @@ exports.authRouter.post("/login", async (req, res) => {
     const updated = await db_1.prisma.user.update({
         where: { id: user.id },
         data: {
-            authToken: token,
+            authToken: (0, authToken_1.hashAuthToken)(token),
             authTokenExpiry: new Date(Date.now() + AUTH_TOKEN_TTL_MS),
         },
     });
-    const { password: _pw, ...safeUser } = updated;
-    return res.json({ token, user: safeUser });
+    return res.json({ token, user: (0, safeUser_1.toSafeUser)(updated) });
 });
 exports.authRouter.post("/reset-password", async (req, res) => {
     const { token, newPassword } = req.body || {};
@@ -62,6 +63,7 @@ exports.authRouter.post("/reset-password", async (req, res) => {
             passwordResetToken: null,
             passwordResetTokenExpiry: null,
             authToken: null,
+            authTokenExpiry: null,
         },
     });
     return res.json({ message: "Password has been reset successfully" });
@@ -92,7 +94,7 @@ exports.authRouter.post("/change-password", async (req, res) => {
         return res.status(401).json({ error: "Authentication required" });
     }
     const sessionToken = authHeader.slice(7);
-    const user = await db_1.prisma.user.findUnique({ where: { authToken: sessionToken } });
+    const user = await (0, authToken_1.findUserByAuthToken)(sessionToken);
     const expired = user?.authTokenExpiry != null && user.authTokenExpiry < new Date();
     if (!user || expired) {
         return res.status(401).json({ error: "Authentication required" });
@@ -120,7 +122,7 @@ exports.authRouter.post("/change-password", async (req, res) => {
         where: { id: user.id },
         data: {
             password: hashed,
-            authToken: token,
+            authToken: (0, authToken_1.hashAuthToken)(token),
             authTokenExpiry: new Date(Date.now() + AUTH_TOKEN_TTL_MS),
         },
     });
@@ -151,7 +153,7 @@ exports.authRouter.post("/resend-verification", async (req, res) => {
         return res.status(401).json({ error: "Authentication required" });
     }
     const token = authHeader.slice(7);
-    const user = await db_1.prisma.user.findUnique({ where: { authToken: token } });
+    const user = await (0, authToken_1.findUserByAuthToken)(token);
     const expired = user?.authTokenExpiry != null && user.authTokenExpiry < new Date();
     if (!user || expired) {
         return res.status(401).json({ error: "Authentication required" });

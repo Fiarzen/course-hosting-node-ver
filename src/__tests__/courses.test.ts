@@ -125,6 +125,7 @@ describe("DELETE /courses/:courseId", () => {
       lessonProgress: { deleteMany: jest.fn() },
       courseEnrollment: { deleteMany: jest.fn() },
       courseAllowedEmail: { deleteMany: jest.fn() },
+      coursePurchase: { deleteMany: jest.fn() },
       course: { delete: jest.fn() },
     }));
 

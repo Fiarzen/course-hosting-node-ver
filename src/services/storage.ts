@@ -45,14 +45,30 @@ function getS3Client(): S3Client | null {
   return s3Client;
 }
 
-export const upload = multer({ storage: multer.memoryStorage() });
+const MAX_PDF_BYTES = 25 * 1024 * 1024; // 25 MB
+
+export const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_PDF_BYTES },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype === "application/pdf") return cb(null, true);
+    const err: any = new Error("Only PDF uploads are allowed");
+    err.status = 400;
+    cb(err);
+  },
+});
 
 export async function uploadPdfFromRequest(
   file: Express.Multer.File | undefined,
 ): Promise<string | null> {
   if (!file) return null;
 
-  const filename = `${crypto.randomUUID()}_${file.originalname}`;
+  // basename + character allowlist: the client-supplied name must never be
+  // able to influence the storage path.
+  const safeName = path
+    .basename(file.originalname)
+    .replace(/[^a-zA-Z0-9._-]/g, "_");
+  const filename = `${crypto.randomUUID()}_${safeName}`;
 
   const client = getS3Client();
   if (client) {

@@ -45,7 +45,9 @@ app.use(
       return cb(new Error("Not allowed by CORS"));
     },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["*"],
+    // A "*" wildcard is ignored by browsers when credentials are involved, so
+    // list the headers the frontend actually sends.
+    allowedHeaders: ["Authorization", "Content-Type"],
     credentials: true,
   }),
 );
@@ -88,6 +90,14 @@ app.use(
   ) => {
     console.error(err);
     if (res.headersSent) return;
+    // Multer file-size violations and upload fileFilter rejections are client
+    // errors, not server faults.
+    if (err?.code === "LIMIT_FILE_SIZE") {
+      return res.status(413).json({ error: "Uploaded file is too large" });
+    }
+    if (typeof err?.status === "number" && err.status >= 400 && err.status < 500) {
+      return res.status(err.status).json({ error: err.message });
+    }
     res.status(500).json({ error: "Internal server error" });
   },
 );

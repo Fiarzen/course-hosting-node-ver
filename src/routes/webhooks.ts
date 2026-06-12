@@ -1,7 +1,11 @@
 import { Router, Request, Response } from "express";
 import { prisma } from "../db";
 import { constructWebhookEvent } from "../services/stripe";
-import { verifyWebhookSignature, capturePaypalOrder } from "../services/paypal";
+import {
+  verifyWebhookSignature,
+  capturePaypalOrder,
+  paypalAmountToCents,
+} from "../services/paypal";
 
 export const webhooksRouter = Router();
 
@@ -77,6 +81,21 @@ async function handleCheckoutSessionCompleted(session: Record<string, unknown>):
     return;
   }
 
+  // Never enroll on a session whose amount/currency doesn't match the purchase.
+  const amountTotal = session["amount_total"];
+  const sessionCurrency = session["currency"];
+  const amountMismatch =
+    typeof amountTotal === "number" && amountTotal !== purchase.amountCents;
+  const currencyMismatch =
+    typeof sessionCurrency === "string" &&
+    sessionCurrency.toLowerCase() !== purchase.currency.toLowerCase();
+  if (amountMismatch || currencyMismatch) {
+    console.error(
+      `checkout.session.completed mismatch for purchase ${purchase.id}: session ${amountTotal} ${sessionCurrency}, expected ${purchase.amountCents} ${purchase.currency}`
+    );
+    return;
+  }
+
   const paymentIntent = session["payment_intent"];
   const customer = session["customer"];
 
@@ -118,14 +137,29 @@ async function handleCheckoutSessionExpired(session: Record<string, unknown>): P
 
 async function handlePaymentIntentFailed(paymentIntent: Record<string, unknown>): Promise<void> {
   const paymentIntentId = paymentIntent["id"] as string;
-  const purchase = await prisma.coursePurchase.findFirst({
+  let purchase = await prisma.coursePurchase.findFirst({
     where: { paymentIntentId, status: "PENDING" },
   });
+
+  // paymentIntentId is only persisted on checkout.session.completed, so a
+  // payment that fails mid-checkout never matches by id. Fall back to the
+  // metadata stamped on the payment intent at session creation.
+  if (!purchase) {
+    const metadata = paymentIntent["metadata"] as Record<string, unknown> | undefined;
+    const userId = Number(metadata?.["userId"]);
+    const courseId = Number(metadata?.["courseId"]);
+    if (!Number.isInteger(userId) || !Number.isInteger(courseId)) return;
+
+    purchase = await prisma.coursePurchase.findFirst({
+      where: { userId, courseId, paymentMethod: "STRIPE", status: "PENDING" },
+      orderBy: { createdAt: "desc" },
+    });
+  }
   if (!purchase) return;
 
   await prisma.coursePurchase.update({
     where: { id: purchase.id },
-    data: { status: "FAILED" },
+    data: { status: "FAILED", paymentIntentId },
   });
 
   console.log(`payment_intent.payment_failed: purchase ${purchase.id} marked FAILED`);
@@ -196,6 +230,22 @@ async function handlePaypalCaptureCompleted(body: Record<string, unknown>): Prom
 
   // If already succeeded (captured via return flow), skip
   if (purchase.status === "SUCCEEDED") return;
+
+  // Never enroll on a capture whose amount/currency doesn't match the purchase.
+  const captureAmount = resource["amount"] as
+    | { currency_code?: string; value?: string }
+    | undefined;
+  const capturedCents = paypalAmountToCents(captureAmount?.value);
+  const capturedCurrency = captureAmount?.currency_code?.toLowerCase() ?? null;
+  if (
+    (capturedCents != null && capturedCents !== purchase.amountCents) ||
+    (capturedCurrency != null && capturedCurrency !== purchase.currency.toLowerCase())
+  ) {
+    console.error(
+      `PAYMENT.CAPTURE.COMPLETED mismatch for purchase ${purchase.id}: captured ${capturedCents} ${capturedCurrency}, expected ${purchase.amountCents} ${purchase.currency}`
+    );
+    return;
+  }
 
   // Fallback: perform capture if still PENDING
   if (purchase.status === "PENDING") {

@@ -7,7 +7,15 @@ const storage_1 = require("../services/storage");
 const storage_2 = require("../services/storage");
 const courseAccess_1 = require("./courseAccess");
 exports.lessonsRouter = (0, express_1.Router)();
-// GET /lessons
+// Replace stored pdfUrl keys with signed URLs, in parallel.
+async function signLessonPdfs(lessons) {
+    await Promise.all(lessons.map(async (lesson) => {
+        if (lesson.pdfUrl) {
+            lesson.pdfUrl = (await (0, storage_2.getSignedPdfUrl)(lesson.pdfUrl)) || lesson.pdfUrl;
+        }
+    }));
+    return lessons;
+}
 // GET /lessons
 exports.lessonsRouter.get("/", async (req, res) => {
     const user = req.user || null;
@@ -15,32 +23,25 @@ exports.lessonsRouter.get("/", async (req, res) => {
         return res.status(401).json({ error: "Not authenticated" });
     if ((0, courseAccess_1.isAdmin)(user)) {
         const all = await db_1.prisma.lesson.findMany();
-        // Generate signed URLs for PDFs
-        for (let lesson of all) {
-            if (lesson.pdfUrl) {
-                lesson.pdfUrl = (await (0, storage_2.getSignedPdfUrl)(lesson.pdfUrl)) || lesson.pdfUrl;
-            }
-        }
-        return res.json(all);
+        return res.json(await signLessonPdfs(all));
     }
-    const enrollments = await db_1.prisma.courseEnrollment.findMany({
-        where: { userId: user.id },
-    });
-    const authoredCourses = await db_1.prisma.course.findMany({
-        where: { authorId: user.id },
-    });
+    const [enrollments, authoredCourses] = await Promise.all([
+        db_1.prisma.courseEnrollment.findMany({
+            where: { userId: user.id },
+            select: { courseId: true },
+        }),
+        db_1.prisma.course.findMany({
+            where: { authorId: user.id },
+            select: { id: true },
+        }),
+    ]);
     const accessibleCourseIds = new Set();
     enrollments.forEach((e) => accessibleCourseIds.add(e.courseId));
     authoredCourses.forEach((c) => accessibleCourseIds.add(c.id));
-    const lessons = await db_1.prisma.lesson.findMany({});
-    const filtered = lessons.filter((l) => accessibleCourseIds.has(l.courseId));
-    // Generate signed URLs for PDFs
-    for (let lesson of filtered) {
-        if (lesson.pdfUrl) {
-            lesson.pdfUrl = (await (0, storage_2.getSignedPdfUrl)(lesson.pdfUrl)) || lesson.pdfUrl;
-        }
-    }
-    return res.json(filtered);
+    const lessons = await db_1.prisma.lesson.findMany({
+        where: { courseId: { in: [...accessibleCourseIds] } },
+    });
+    return res.json(await signLessonPdfs(lessons));
 });
 // GET /lessons/course/:courseId
 exports.lessonsRouter.get("/course/:courseId", async (req, res) => {
@@ -65,13 +66,7 @@ exports.lessonsRouter.get("/course/:courseId", async (req, res) => {
         }));
         return res.json(summaries);
     }
-    // Generate signed URLs for PDFs
-    for (let lesson of orderedLessons) {
-        if (lesson.pdfUrl) {
-            lesson.pdfUrl = (await (0, storage_2.getSignedPdfUrl)(lesson.pdfUrl)) || lesson.pdfUrl;
-        }
-    }
-    return res.json(orderedLessons);
+    return res.json(await signLessonPdfs(orderedLessons));
 });
 // GET /lessons/:lessonId
 exports.lessonsRouter.get("/:lessonId", async (req, res) => {
@@ -232,11 +227,5 @@ exports.lessonsRouter.post("/course/:courseId/reorder", async (req, res) => {
         where: { courseId },
         orderBy: [{ orderIndex: "asc" }, { id: "asc" }],
     });
-    // Generate signed URLs for PDFs
-    for (let lesson of updated) {
-        if (lesson.pdfUrl) {
-            lesson.pdfUrl = (await (0, storage_2.getSignedPdfUrl)(lesson.pdfUrl)) || lesson.pdfUrl;
-        }
-    }
-    return res.json(updated);
+    return res.json(await signLessonPdfs(updated));
 });

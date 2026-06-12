@@ -42,11 +42,27 @@ function getS3Client() {
     }
     return s3Client;
 }
-exports.upload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage() });
+const MAX_PDF_BYTES = 25 * 1024 * 1024; // 25 MB
+exports.upload = (0, multer_1.default)({
+    storage: multer_1.default.memoryStorage(),
+    limits: { fileSize: MAX_PDF_BYTES },
+    fileFilter: (_req, file, cb) => {
+        if (file.mimetype === "application/pdf")
+            return cb(null, true);
+        const err = new Error("Only PDF uploads are allowed");
+        err.status = 400;
+        cb(err);
+    },
+});
 async function uploadPdfFromRequest(file) {
     if (!file)
         return null;
-    const filename = `${crypto_1.default.randomUUID()}_${file.originalname}`;
+    // basename + character allowlist: the client-supplied name must never be
+    // able to influence the storage path.
+    const safeName = path_1.default
+        .basename(file.originalname)
+        .replace(/[^a-zA-Z0-9._-]/g, "_");
+    const filename = `${crypto_1.default.randomUUID()}_${safeName}`;
     const client = getS3Client();
     if (client) {
         try {

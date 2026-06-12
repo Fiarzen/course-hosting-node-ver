@@ -105,6 +105,15 @@ export async function createPaypalOrder(params: CreateOrderParams): Promise<Crea
 export interface CaptureResult {
   status: string;
   captureId: string | null;
+  amountCents: number | null;
+  currency: string | null;
+}
+
+// PayPal amounts are decimal strings like "19.99".
+export function paypalAmountToCents(value: string | undefined): number | null {
+  if (!value) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.round(parsed * 100) : null;
 }
 
 export async function capturePaypalOrder(orderId: string): Promise<CaptureResult> {
@@ -127,12 +136,22 @@ export async function capturePaypalOrder(orderId: string): Promise<CaptureResult
   const data = (await res.json()) as {
     status: string;
     purchase_units?: Array<{
-      payments?: { captures?: Array<{ id: string }> };
+      payments?: {
+        captures?: Array<{
+          id: string;
+          amount?: { currency_code?: string; value?: string };
+        }>;
+      };
     }>;
   };
 
-  const captureId = data.purchase_units?.[0]?.payments?.captures?.[0]?.id ?? null;
-  return { status: data.status, captureId };
+  const capture = data.purchase_units?.[0]?.payments?.captures?.[0];
+  return {
+    status: data.status,
+    captureId: capture?.id ?? null,
+    amountCents: paypalAmountToCents(capture?.amount?.value),
+    currency: capture?.amount?.currency_code?.toLowerCase() ?? null,
+  };
 }
 
 export async function verifyWebhookSignature(

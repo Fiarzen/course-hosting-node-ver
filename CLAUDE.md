@@ -45,7 +45,7 @@ PayPal webhooks (`POST /webhooks/paypal`) are also mounted under `/webhooks` but
 ## Route reference
 
 ### `/auth`
-- `POST /auth/login` → sets new UUID `authToken`, returns `{ token, user }`.
+- `POST /auth/login` → issues a new UUID session token, returns `{ token, user }`. **Only the SHA-256 hash of the token is stored** in `User.authToken` (see `src/utils/authToken.ts`); every token lookup goes through `findUserByAuthToken`, which also transparently upgrades pre-hashing plaintext sessions in place.
 - `POST /auth/reset-password` → validates one-time reset token, hashes new password.
 - `POST /auth/change-password` → requires `Bearer` auth (validated inline, like `/resend-verification`). Body `{ currentPassword, newPassword }`. Verifies `currentPassword` with bcrypt, then hashes `newPassword` and **rotates `authToken`** (invalidates other sessions), returning `{ message, token }` so the calling client stays signed in. `newPassword` min length 6. Under `authLimiter`.
 
@@ -56,7 +56,7 @@ Protected: `GET /users` (admin), `GET /users/me`, `POST /users/:id/upgrade-to-cr
 ### `/courses`
 Public: `GET /courses` — respects allowlist visibility; now includes `isPaid`, `priceCents`, `currency` on each course.
 Protected:
-- `POST /courses` — CREATOR/ADMIN; accepts optional `{ isPaid, priceCents, currency }`.
+- `POST /courses` — CREATOR/ADMIN; accepts optional `{ isPaid, priceCents, currency }`. `authorId` in the body is honored only for admins; creators always become the author themselves.
 - `GET /courses/my-created`
 - `GET /courses/:courseId/access`, `PUT /courses/:courseId/access`
 - `PUT /courses/:courseId/pricing` — CREATOR/ADMIN; `{ isPaid, priceCents, currency }`. Price changes only affect new purchases; existing `CoursePurchase` records keep their historical snapshot.
@@ -99,7 +99,7 @@ All auth-required.
 - `POST /payments/paypal/capture` body `{ token: orderId }` — captures the PayPal order, marks SUCCEEDED, upserts `CourseEnrollment` in a transaction. Idempotent if already SUCCEEDED.
 
 ### `/webhooks` (public — no authMiddleware)
-- `POST /webhooks/stripe` — raw body + `Stripe-Signature` header. Handles `checkout.session.completed` (mark SUCCEEDED + enroll), `checkout.session.expired` (mark EXPIRED), `payment_intent.payment_failed` (mark FAILED). Idempotent via `StripeWebhookEvent` table.
+- `POST /webhooks/stripe` — raw body + `Stripe-Signature` header. Handles `checkout.session.completed` (mark SUCCEEDED + enroll), `checkout.session.expired` (mark EXPIRED), `payment_intent.payment_failed` (mark FAILED — matched by `paymentIntentId` when known, else by the `courseId`/`userId` metadata stamped on the payment intent via `payment_intent_data` at session creation). Idempotent via `StripeWebhookEvent` table.
 - `POST /webhooks/paypal` — JSON body. Verifies signature via PayPal API call. Handles `PAYMENT.CAPTURE.COMPLETED` (fallback if return flow didn't run), `PAYMENT.CAPTURE.DENIED/DECLINED`. Idempotency stored in `StripeWebhookEvent` with `paypal-` prefix on event ID.
 
 ---
@@ -139,7 +139,7 @@ Lazy singleton Stripe client (initialised on first call, not at import time — 
 No SDK — uses Node 20 built-in `fetch`. Exports `createPaypalOrder(params)`, `capturePaypalOrder(orderId)`, `verifyWebhookSignature(headers, body)`. Base URL switches on `PAYPAL_ENVIRONMENT` (sandbox/live). Access token fetched fresh per call (stateless).
 
 ### `src/services/storage.ts`
-`upload.single("pdf")` via multer memory storage. S3 mode: `AWS_S3_ENABLED=true`. Stores S3 key (not URL) in `Lesson.pdfUrl`. `getSignedPdfUrl` returns 1-hour signed URL for S3 keys; passes through local `/files/...` paths unchanged.
+`upload.single("pdf")` via multer memory storage — 25 MB size limit, `application/pdf` mimetype filter, and the client filename is basenamed + character-sanitized before use. S3 mode: `AWS_S3_ENABLED=true`. Stores S3 key (not URL) in `Lesson.pdfUrl`. `getSignedPdfUrl` returns 1-hour signed URL for S3 keys; passes through local `/files/...` paths unchanged.
 
 ---
 
@@ -183,6 +183,8 @@ PAYPAL_CANCEL_URL            # e.g. https://mind-leaf.netlify.app/payment/cancel
 - **Stripe client lazy init**: `src/services/stripe.ts` throws at call time if `STRIPE_SECRET_KEY` is missing, not at import time. The server starts cleanly without Stripe configured; only payment endpoints fail.
 - **Migration history**: `prisma/migrations/` is committed. Always use `prisma migrate deploy` (not `db push`) in any environment.
 - **Price changes are non-retroactive**: `PUT /courses/:courseId/pricing` updates the course. Existing `CoursePurchase` rows keep their own `amountCents`/`currency` snapshot.
+- **Amount verification before enrollment**: the Stripe `checkout.session.completed` handler, the PayPal capture route, and the PayPal capture webhook all compare the captured amount/currency against the `CoursePurchase` snapshot and refuse to enroll on mismatch.
+- **User serialization**: always return users through `toSafeUser` (`src/utils/safeUser.ts`) — it strips the password hash, `authToken`, and reset/verification tokens. Never `include: { author: true }` on public queries; select `{ id, name }`.
 
 ---
 
@@ -190,4 +192,4 @@ PAYPAL_CANCEL_URL            # e.g. https://mind-leaf.netlify.app/payment/cancel
 - `CREATING_PAID_COURSE.md` — user-facing guide covering Stripe/PayPal setup, webhook registration, test cards, and purchase auditing.
 - `Stripe-plan.md` — original design spec for the payment feature (for reference; implementation may differ in minor details).
 - `.env.example` — template with all env vars.
-- `prisma/migrations/` — `20260521_add_stripe_payments`, `20260522_add_paypal_payments`, `20260525_add_email_verification`, `20260603_add_assessments`.
+- `prisma/migrations/` — `20260521_add_stripe_payments`, `20260522_add_paypal_payments`, `20260525_add_email_verification`, `20260603_add_assessments`, `20260612_add_query_indexes`.

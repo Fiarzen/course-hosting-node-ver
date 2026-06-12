@@ -8,6 +8,7 @@ const express_1 = require("express");
 const bcrypt_1 = __importDefault(require("bcrypt"));
 const crypto_1 = __importDefault(require("crypto"));
 const db_1 = require("../db");
+const safeUser_1 = require("../utils/safeUser");
 const rateLimit_1 = require("../middleware/rateLimit");
 const email_1 = require("../services/email");
 const publicRouter = (0, express_1.Router)();
@@ -40,8 +41,7 @@ publicRouter.post("/register", rateLimit_1.authLimiter, async (req, res) => {
         },
     });
     await (0, email_1.sendVerificationEmail)(email, verificationToken);
-    const { password: _pw, ...safeUser } = user;
-    return res.status(201).json(safeUser);
+    return res.status(201).json((0, safeUser_1.toSafeUser)(user));
 });
 // GET /users (admin only)
 protectedRouter.get("/", async (req, res) => {
@@ -52,7 +52,7 @@ protectedRouter.get("/", async (req, res) => {
         return res.status(403).json({ error: "Only admins can access this endpoint" });
     }
     const users = await db_1.prisma.user.findMany();
-    return res.json(users.map(({ password, ...rest }) => rest));
+    return res.json(users.map(safeUser_1.toSafeUser));
 });
 // GET /users/me
 protectedRouter.get("/me", async (req, res) => {
@@ -62,8 +62,7 @@ protectedRouter.get("/me", async (req, res) => {
     if (!user) {
         return res.status(404).json({ error: "User not found" });
     }
-    const { password, ...safeUser } = user;
-    return res.json(safeUser);
+    return res.json((0, safeUser_1.toSafeUser)(user));
 });
 // POST /users/:userId/upgrade-to-creator (admin only)
 protectedRouter.post("/:userId/upgrade-to-creator", async (req, res) => {
@@ -84,8 +83,7 @@ protectedRouter.post("/:userId/upgrade-to-creator", async (req, res) => {
         where: { id: userId },
         data: { role: "CREATOR" },
     });
-    const { password, ...safeUser } = updated;
-    return res.json({ message: "User successfully upgraded to CREATOR", user: safeUser });
+    return res.json({ message: "User successfully upgraded to CREATOR", user: (0, safeUser_1.toSafeUser)(updated) });
 });
 // POST /users/:userId/reset-password (admin creates token)
 protectedRouter.post("/:userId/reset-password", async (req, res) => {
