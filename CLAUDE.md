@@ -141,6 +141,9 @@ No SDK — uses Node 20 built-in `fetch`. Exports `createPaypalOrder(params)`, `
 ### `src/services/storage.ts`
 `upload.single("pdf")` via multer memory storage — 25 MB size limit, `application/pdf` mimetype filter, and the client filename is basenamed + character-sanitized before use. S3 mode: `AWS_S3_ENABLED=true`. Stores S3 key (not URL) in `Lesson.pdfUrl`. `getSignedPdfUrl` returns 1-hour signed URL for S3 keys; passes through local `/files/...` paths unchanged.
 
+### `src/services/email.ts`
+**Resend** via Node built-in `fetch` (no SDK), `POST https://api.resend.com/emails`. Exports `sendVerificationEmail`, `sendPasswordResetEmail`, `sendAdminPasswordResetEmail` — each returns `Promise<boolean>` and **never throws**: a provider failure or missing `RESEND_API_KEY`/`EMAIL_FROM` is logged and reported as `false`. This is deliberate — Express 4 turns a rejected async route handler into an unhandled rejection, which previously crash-looped the container when the mail provider started returning 401. `src/server.ts` also installs an `unhandledRejection` logger as a backstop.
+
 ---
 
 ## Environment variables
@@ -156,6 +159,11 @@ AWS_S3_ENABLED               # "true" to enable
 AWS_S3_BUCKET_NAME
 AWS_REGION
 AWS_ENDPOINT_URL             # optional, for S3-compatible providers
+
+# Email (Resend)
+RESEND_API_KEY               # re_...
+EMAIL_FROM                   # must be on a domain verified in Resend
+FRONTEND_URL                 # base for verify/reset links; defaults to https://mind-leaf.netlify.app
 
 # Stripe
 STRIPE_SECRET_KEY            # sk_live_... or sk_test_...

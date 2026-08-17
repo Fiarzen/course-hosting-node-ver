@@ -1,42 +1,53 @@
-import sgMail from "@sendgrid/mail";
-import type { MailDataRequired } from "@sendgrid/mail";
+const RESEND_API_URL = "https://api.resend.com/emails";
 
-function getSgMail(): typeof sgMail {
-  const key = process.env.SENDGRID_API_KEY;
-  if (!key) throw new Error("SENDGRID_API_KEY is not set");
-  sgMail.setApiKey(key);
-  return sgMail;
-}
+type EmailMessage = {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+};
 
 function frontendUrl(): string {
   return process.env.FRONTEND_URL ?? "https://mind-leaf.netlify.app";
 }
 
-function fromAddress(): string {
-  const from = process.env.EMAIL_FROM;
-  if (!from) throw new Error("EMAIL_FROM is not set");
-  return from;
-}
-
 /**
- * Sends a message and never throws. A provider outage (expired plan, revoked
- * key, missing config) must not take down the request — or the process, since
- * Express 4 turns a rejected async handler into an unhandled rejection.
- * Returns whether the message was accepted by the provider.
+ * Sends a message via Resend and never throws. A provider outage (revoked key,
+ * missing config, unverified sender domain) must not take down the request — or
+ * the process, since Express 4 turns a rejected async handler into an unhandled
+ * rejection. Returns whether Resend accepted the message.
  */
-async function deliver(purpose: string, msg: MailDataRequired): Promise<boolean> {
+async function deliver(purpose: string, msg: EmailMessage): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.EMAIL_FROM;
+
+  if (!apiKey || !from) {
+    console.error(
+      `Email delivery skipped (${purpose}): ${!apiKey ? "RESEND_API_KEY" : "EMAIL_FROM"} is not set`,
+    );
+    return false;
+  }
+
   try {
-    await getSgMail().send(msg);
+    const res = await fetch(RESEND_API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ from, ...msg }),
+    });
+
+    if (!res.ok) {
+      console.error(
+        `Email delivery failed (${purpose}): ${res.status} ${await res.text()}`,
+      );
+      return false;
+    }
+
     return true;
   } catch (err) {
-    const detail =
-      (err as { response?: { body?: unknown } })?.response?.body ??
-      (err as Error)?.message ??
-      err;
-    console.error(
-      `Email delivery failed (${purpose}):`,
-      typeof detail === "string" ? detail : JSON.stringify(detail),
-    );
+    console.error(`Email delivery failed (${purpose}):`, err);
     return false;
   }
 }
@@ -47,7 +58,6 @@ export async function sendVerificationEmail(
 ): Promise<boolean> {
   const link = `${frontendUrl()}/verify-email?token=${token}`;
   return deliver("verification", {
-    from: fromAddress(),
     to,
     subject: "Verify your mindleaf account",
     text: `Click the link below to verify your email address:\n\n${link}\n\nThis link expires in 1 hour. If you didn't create a mindleaf account, you can ignore this email.`,
@@ -61,7 +71,6 @@ export async function sendPasswordResetEmail(
 ): Promise<boolean> {
   const link = `${frontendUrl()}/reset-password?token=${token}`;
   return deliver("password-reset", {
-    from: fromAddress(),
     to,
     subject: "Reset your mindleaf password",
     text: `Click the link below to reset your password:\n\n${link}\n\nThis link expires in 1 hour. If you didn't request a password reset, you can ignore this email.`,
@@ -75,7 +84,6 @@ export async function sendAdminPasswordResetEmail(
 ): Promise<boolean> {
   const link = `${frontendUrl()}/reset-password?token=${token}`;
   return deliver("admin-password-reset", {
-    from: fromAddress(),
     to,
     subject: "Your mindleaf password has been reset",
     text: `An administrator has initiated a password reset for your account. Click the link below to set a new password:\n\n${link}\n\nThis link expires in 1 hour.`,
