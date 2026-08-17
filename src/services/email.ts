@@ -1,4 +1,5 @@
 import sgMail from "@sendgrid/mail";
+import type { MailDataRequired } from "@sendgrid/mail";
 
 function getSgMail(): typeof sgMail {
   const key = process.env.SENDGRID_API_KEY;
@@ -17,12 +18,35 @@ function fromAddress(): string {
   return from;
 }
 
+/**
+ * Sends a message and never throws. A provider outage (expired plan, revoked
+ * key, missing config) must not take down the request — or the process, since
+ * Express 4 turns a rejected async handler into an unhandled rejection.
+ * Returns whether the message was accepted by the provider.
+ */
+async function deliver(purpose: string, msg: MailDataRequired): Promise<boolean> {
+  try {
+    await getSgMail().send(msg);
+    return true;
+  } catch (err) {
+    const detail =
+      (err as { response?: { body?: unknown } })?.response?.body ??
+      (err as Error)?.message ??
+      err;
+    console.error(
+      `Email delivery failed (${purpose}):`,
+      typeof detail === "string" ? detail : JSON.stringify(detail),
+    );
+    return false;
+  }
+}
+
 export async function sendVerificationEmail(
   to: string,
   token: string,
-): Promise<void> {
+): Promise<boolean> {
   const link = `${frontendUrl()}/verify-email?token=${token}`;
-  await getSgMail().send({
+  return deliver("verification", {
     from: fromAddress(),
     to,
     subject: "Verify your mindleaf account",
@@ -34,9 +58,9 @@ export async function sendVerificationEmail(
 export async function sendPasswordResetEmail(
   to: string,
   token: string,
-): Promise<void> {
+): Promise<boolean> {
   const link = `${frontendUrl()}/reset-password?token=${token}`;
-  await getSgMail().send({
+  return deliver("password-reset", {
     from: fromAddress(),
     to,
     subject: "Reset your mindleaf password",
@@ -48,9 +72,9 @@ export async function sendPasswordResetEmail(
 export async function sendAdminPasswordResetEmail(
   to: string,
   token: string,
-): Promise<void> {
+): Promise<boolean> {
   const link = `${frontendUrl()}/reset-password?token=${token}`;
-  await getSgMail().send({
+  return deliver("admin-password-reset", {
     from: fromAddress(),
     to,
     subject: "Your mindleaf password has been reset",
