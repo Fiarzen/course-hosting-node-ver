@@ -10,7 +10,7 @@ const isTest = process.env.NODE_ENV === "test";
 // hurting legitimate users.
 export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // 10 attempts per IP per window
+  max: 15, // 10 attempts per IP per window
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => isTest || req.method === "OPTIONS", // don't count CORS preflights
